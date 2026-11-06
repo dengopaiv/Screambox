@@ -59,7 +59,7 @@ C++17, `/permissive-`, `/utf-8`, Unicode build (`UNICODE`/`_UNICODE`), `WIN32` s
 > **If configure fails** with a message about a missing `CMakeSystem.cmake.in` under a
 > CMake version you no longer have installed, the cache is stale. Delete
 > `build/CMakeCache.txt` and `build/CMakeFiles/` and reconfigure. Do not delete the rest
-> of `build/` — it also holds `Release/` and the packaged modules.
+> of `build/` — it also holds `Release/`.
 
 ---
 
@@ -75,8 +75,8 @@ C++17, `/permissive-`, `/utf-8`, Unicode build (`UNICODE`/`_UNICODE`), `WIN32` s
   same announcement.
 - **No MIDI.** There used to be a MIDI input that stored incoming notes and never played
   them; it was removed rather than left advertising something it did not do.
-- **Modules:** `modules/` holds the shipped content — 56 `.cb` presets from 2006–2010
-  plus a handful of `.roq` songs.
+- **Modules:** `modules/` holds 56 `.cb` presets from 2006–2010 plus a handful of `.roq`
+  songs. They are the developer's local library and are not shipped with the program.
 
 ---
 

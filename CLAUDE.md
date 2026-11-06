@@ -20,8 +20,10 @@ cmake --build build --config Release
 
 If configure fails complaining about a `CMakeSystem.cmake.in` under a CMake version that
 is no longer installed, delete `build/CMakeCache.txt` and `build/CMakeFiles/` and
-reconfigure. Leave the rest of `build/` alone — it holds `Release/` and the packaged
-modules.
+reconfigure. Leave the rest of `build/` alone — it holds `Release/`.
+
+The release package lives in `dist/` (ignored by git): the exe, `README.md`, `TESTING.txt`,
+`LICENSE.txt`, `license-bmd.txt` and `creakbox.txt`. The `modules/` presets are not shipped.
 
 ## What is compiled and what is not
 
