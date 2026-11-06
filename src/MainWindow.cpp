@@ -3,7 +3,6 @@
 #include "CBEngine.h"
 #include "CbPresetIO.h"
 #include "RoqIO.h"
-#include "MidiInput.h"
 #include "resource.h"
 
 #ifdef max
@@ -163,8 +162,8 @@ static void makeCheckboxEnterActivatable(HWND box) {
 }
 } // namespace
 
-MainWindow::MainWindow(CBEngine& engine, AudioEngine& audio, MidiInput& midi, HINSTANCE hInst)
-    : engine_(engine), audio_(audio), midi_(midi), hInst_(hInst) {}
+MainWindow::MainWindow(CBEngine& engine, AudioEngine& audio, HINSTANCE hInst)
+    : engine_(engine), audio_(audio), hInst_(hInst) {}
 
 LRESULT CALLBACK MainWindow::staticProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     auto* self = reinterpret_cast<MainWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));

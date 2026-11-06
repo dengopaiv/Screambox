@@ -274,17 +274,6 @@ float CBEngine::getParam(CbParam p) const {
     return params_[int(p)].load(std::memory_order_relaxed);
 }
 
-void CBEngine::noteOn(int midi, int velocity) {
-    if (velocity <= 0) { noteOff(midi); return; }
-    midiNote_.store(midi, std::memory_order_relaxed);
-    midiVel_.store(velocity / 127.0f, std::memory_order_relaxed);
-}
-
-void CBEngine::noteOff(int midi) {
-    if (midiNote_.load(std::memory_order_relaxed) == midi)
-        midiNote_.store(-1, std::memory_order_relaxed);
-}
-
 void CBEngine::setPattern(const CbPattern& p) {
     SongWriter w(*this);
     w.data().patterns.assign(1, p);

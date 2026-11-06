@@ -14,7 +14,6 @@ set(CREAKBOX_SOURCES
     src/WinMain.cpp
     src/MainWindow.cpp
     src/AudioEngine.cpp
-    src/MidiInput.cpp
     src/CBEngine.cpp
     src/CbPresetIO.cpp
     src/RoqIO.cpp
@@ -29,7 +28,6 @@ set(CREAKBOX_SOURCES
 set(CREAKBOX_HEADERS
     src/MainWindow.h
     src/AudioEngine.h
-    src/MidiInput.h
     src/CBEngine.h
     src/CbPresetIO.h
     src/RoqIO.h
@@ -48,7 +46,6 @@ add_executable(Creakbox WIN32
 
 target_include_directories(Creakbox PRIVATE src)
 target_link_libraries(Creakbox PRIVATE
-    winmm
     ole32
     uuid
     comctl32

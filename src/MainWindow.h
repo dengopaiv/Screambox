@@ -7,13 +7,12 @@
 #include "CBEngine.h"
 
 class AudioEngine;
-class MidiInput;
 
 // Accessible main window. Every control is a system control with a preceding
 // STATIC label; screen readers announce control name + value out of the box.
 class MainWindow {
 public:
-    MainWindow(CBEngine& engine, AudioEngine& audio, MidiInput& midi, HINSTANCE hInst);
+    MainWindow(CBEngine& engine, AudioEngine& audio, HINSTANCE hInst);
 
     // Sweep data model: per-parameter list of sweeps. Exposed publicly
     // so sweepEditorProc helpers can reference the type.
@@ -89,7 +88,6 @@ private:
 
     CBEngine& engine_;
     AudioEngine& audio_;
-    MidiInput& midi_;
     HINSTANCE hInst_ = nullptr;
     HWND hwnd_ = nullptr;
     HACCEL accel_ = nullptr;

@@ -99,10 +99,6 @@ public:
     // Called by audio thread. `out` is interleaved stereo float32.
     void process(float* out, int frames);
 
-    // Called from any thread.
-    void noteOn(int midi, int velocity);
-    void noteOff(int midi);
-
     // Parameter access — atomic float store/load.
     void  setParam(CbParam p, float v);
     float getParam(CbParam p) const;
@@ -275,10 +271,6 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<int>  displayStep_{-1};   // published for the UI; see currentStepIndex()
     std::atomic<PlayMode> playMode_{PlayMode::FullSequence};
-
-    // External MIDI note (independent of sequencer).
-    std::atomic<int>   midiNote_{-1};
-    std::atomic<float> midiVel_{0.0f};
 
     // Sequencer bookkeeping (audio thread).
     int    currentStep_ = 0;
