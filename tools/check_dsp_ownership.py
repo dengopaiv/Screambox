@@ -35,7 +35,9 @@ AUDIO_THREAD = {
     "CBEngine::applyTransportReset",
 }
 # Constructor and setSampleRate run before/outside streaming; setSampleRate is
-# called once at start-up from the audio device setup, not from the UI.
+# called by the audio thread itself, each time it opens (or after losing one,
+# reopens) a device and before it renders a block at the new rate - never from
+# the UI.
 CONSTRUCTION = {"CBEngine::CBEngine", "CBEngine::setSampleRate"}
 
 src = io.open(ENG, encoding="utf-8").read()

@@ -483,6 +483,7 @@ void MainWindow::buildLayout() {
     swprintf(initMsg, 128, L"Ready. Audio: %.0f Hz, WASAPI shared.  Sweeps off.",
              audio_.sampleRate());
     SetWindowTextW(hStatus_, initMsg);
+    audioGen_ = audio_.deviceGeneration();   // the device we started on is not news
 
     refreshPatternLabel();
 }
@@ -2378,7 +2379,8 @@ LRESULT MainWindow::proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             SetTimer(hwnd, 1, 100, nullptr);  // 10 Hz transport-position poll
             return 0;
         case WM_TIMER:
-            if (wp == 1 && engine_.isRunning()) {
+            if (wp == 1 && audio_.deviceGeneration() != audioGen_) announceAudioDeviceChange();
+            if (wp == 1 && engine_.isRunning() && !audio_.deviceLost()) {
                 int pat  = engine_.currentPatternIndex();
                 int step = engine_.currentStepIndex();
                 int pats = engine_.patternCount();
@@ -2409,6 +2411,23 @@ LRESULT MainWindow::proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         default: break;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+// Called from the timer when the audio thread has lost or reopened a device.
+// One announcement per change; the status line then keeps saying it while no
+// device exists, because the transport poll above stands aside until then.
+void MainWindow::announceAudioDeviceChange() {
+    audioGen_ = audio_.deviceGeneration();
+    if (audio_.deviceLost()) {
+        announceValue(hStatus_, "Audio device lost. Waiting for an output device.");
+        return;
+    }
+    const std::wstring name = audio_.deviceName();
+    char sb[256];
+    _snprintf_s(sb, _TRUNCATE, "Audio device changed, now %s at %.0f Hz.",
+                name.empty() ? "the default output" : fromWide(name).c_str(),
+                audio_.sampleRate());
+    announceValue(hStatus_, sb);
 }
 
 int MainWindow::runMessageLoop() {

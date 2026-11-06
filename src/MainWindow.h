@@ -118,6 +118,10 @@ private:
     HWND hStepReverse_ = nullptr;   // Checkbox: per-step reverse (EnvMod sign flip)
     int  focusedStep_ = 0;          // which step the value controls reflect
     HWND hStatus_ = nullptr;
+    // Last AudioEngine::deviceGeneration() announced. The audio thread bumps
+    // it when a device is lost or reopened; the 10 Hz timer says so once.
+    unsigned audioGen_ = 0;
+    void announceAudioDeviceChange();
 
     // Parameter trackbars (Volume, Cutoff, Resonance, EnvMod, Decay, Accent, Tuning)
     HWND hSliders_[7]{};
