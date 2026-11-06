@@ -1,7 +1,7 @@
-# Creakbox
+# Screambox
 
-An extension of CreakBox: a standalone Windows bassline synth and step sequencer, built
-to be **fully usable from the keyboard and by a screen reader**. It started from a
+**Screambox is built on CreakBox.** A standalone Windows bassline synth and step sequencer,
+built to be **fully usable from the keyboard and by a screen reader**. It started from a
 TB-303-style voice and still has one at its core, but it has grown well past imitating
 the 303 — variable-length and triplet patterns, reverse step, a PWM LFO, noise, and an
 acid FX block are all things the original box never had.
@@ -10,6 +10,15 @@ The DSP is the original 2002–2004 Frank Reitz ("Bass Assessor") CreakBox / Sil
 engine, lifted verbatim. What was rewritten is everything around it: the VST plumbing
 and the bitmap-knob GUI are gone, replaced by a plain Win32 application built out of
 standard system controls.
+
+**About the name.** Until November 2026 this program was called Creakbox, after the
+original. It was renamed so that nobody mistakes it for Bass Assessor's 2002 CreakBox or
+assumes he made or endorsed it - not to take the credit for the sound. The filter, the
+oscillators, the envelope and the accent come from CreakBox and its 2004 VST source
+(bioroid media development, with wwelti's DSP optimisations), kept bit-identical on
+purpose; the About box says so, and so does this file. The file formats keep their
+`CreakboxRoq` / `CreakboxHape` headers, so songs and sweep files saved under the old name
+open unchanged.
 
 ---
 
@@ -42,7 +51,8 @@ cmake -S . -B build -A x64
 cmake --build build --config Release
 ```
 
-The result is `build/Release/Creakbox.exe`.
+The result is `build/Release/Screambox.exe`. The C/C++ runtime is linked statically, so
+the exe runs on its own, with no Visual C++ redistributable to install.
 
 C++17, `/permissive-`, `/utf-8`, Unicode build (`UNICODE`/`_UNICODE`), `WIN32` subsystem.
 
@@ -156,7 +166,7 @@ one type combo and three knobs — **gain**, **tone**, **level**.
 
 | Type | What it models | Character |
 |---|---|---|
-| **Classic** | The stock 2004 `dist_dist()`, byte-for-byte | The Creakbox sound. Default. |
+| **Classic** | The stock 2004 `dist_dist()`, byte-for-byte | The CreakBox sound. Default. |
 | **Rat** | ProCo RAT: a slew-limited op-amp into symmetric hard-clipping diodes, then a passive low-pass | The acid distortion. Roughly three quarters of pre-2000 acid records went through one. |
 | **Screamer** | Tube Screamer: soft clipping in the feedback loop with the bass kept *out* of the clipper | Mid-forward and comparatively polite; thins a bassline out, which is why it cuts. |
 | **Dist+** | MXR Distortion+: hard clipping with no slew limiting | Brighter and rawer than the RAT — that contrast is why both are here. |
@@ -220,7 +230,7 @@ Amount at 0 skips the multiply entirely, and the frequency label says so.
 
 ### Sweeps — the modulation system
 
-Sweeps are the canonical way to modulate anything in Creakbox. Each of the seven
+Sweeps are the canonical way to modulate anything in Screambox. Each of the seven
 parameter sliders carries its own list of sweeps; a sweep interpolates a slider value
 between a `(pattern, step)` start point and a `(pattern, step)` end point. They can be
 copied and pasted between parameters, saved on their own as `.hape`, and are stored in
@@ -350,7 +360,7 @@ at any rate. Where the step is already whole (44.1 kHz at 140 BPM) nothing chang
 
 ### The envelope — and why there are four of them
 
-Creakbox inherits the 303's envelope arrangement verbatim, and it does not look like an
+Screambox inherits the 303's envelope arrangement verbatim, and it does not look like an
 ADSR. There is no attack control, no sustain and no release. There is one **Decay** knob,
 and it drives four separate pieces of state that all run at once. Anything described as
 "changing the envelope" has to say *which* of the four it means, so they are set out here.
@@ -480,7 +490,8 @@ All three are plain text, so they can be hand-inspected and diffed.
 ### `.roq` — song (read/write)
 
 Estonian *röök*, "roar". Bundles patterns, every slider value and every sweep. Magic
-`CreakboxRoq`, then a version integer, then one value per line.
+`CreakboxRoq` (from before the rename, and kept: every saved song depends on it), then a
+version integer, then one value per line.
 
 Every version bump up to v9 only appended, so **old files load into new builds** with the
 newer fields defaulting to their off/neutral values — a v1 song sounds today exactly as it
@@ -749,8 +760,8 @@ Tracked in full, with approach and acceptance tests, in **[`TODO.md`](TODO.md)**
 ## License
 
 The original CreakBox was released as freeware by Bass Assessor in 2002, free to use in
-your own tracks (see `creakbox.txt`). This extension of it is released under the
-BSD 3-Clause License — see `LICENSE`.
+your own tracks (see `creakbox.txt`). Screambox, the extension of it, is released under
+the BSD 3-Clause License — see `LICENSE`.
 
 The 2004 VST sources in `src/` (and the DSP the standalone reuses from them) are
 © 2004 bioroid media development under the BSD-style terms in `license-bmd.txt`, which

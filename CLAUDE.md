@@ -1,4 +1,11 @@
-# Working on Creakbox
+# Working on Screambox
+
+Formerly Creakbox; renamed 2026-11-06. **Credit the original wherever the name appears**:
+the sound is Bass Assessor's CreakBox (2002) and its 2004 VST source, kept bit-identical on
+purpose, and the rename exists to avoid confusion with that program, not to claim it. Two
+things keep the old name and must go on keeping it: the `CreakboxRoq` / `CreakboxHape`
+file magics (renaming them makes every saved song unreadable), and every reference to the
+original - `CREAKBOX.EXE`, the `.cb` "CreakBox" header, `creakbox.txt`, `reverse/`.
 
 Read `README.md` first for what the program is and how to build it, and `TODO.md` for what
 is still outstanding. This file covers the things that are easy to get wrong and that

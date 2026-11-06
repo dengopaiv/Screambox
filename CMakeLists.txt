@@ -1,11 +1,13 @@
 cmake_minimum_required(VERSION 3.20)
-project(Creakbox LANGUAGES CXX)
+# Screambox - formerly Creakbox, renamed 2026-11-06. Built on CreakBox (2002) by
+# Frank Reitz (Bass Assessor) and its 2004 VST source; see README "Lineage".
+project(Screambox LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Static C/C++ runtime: Creakbox ships as one exe, and with the default DLL
+# Static C/C++ runtime: Screambox ships as one exe, and with the default DLL
 # runtime it would not start on a machine without the Visual C++
 # redistributable (MSVCP140.dll / VCRUNTIME140.dll). Set before any target.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -15,7 +17,7 @@ if(MSVC)
     add_compile_definitions(UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
-set(CREAKBOX_SOURCES
+set(SCREAMBOX_SOURCES
     src/WinMain.cpp
     src/MainWindow.cpp
     src/AudioEngine.cpp
@@ -30,7 +32,7 @@ set(CREAKBOX_SOURCES
     src/freq.cpp
 )
 
-set(CREAKBOX_HEADERS
+set(SCREAMBOX_HEADERS
     src/MainWindow.h
     src/AudioEngine.h
     src/CBEngine.h
@@ -43,14 +45,14 @@ set(CREAKBOX_HEADERS
     src/core.h
 )
 
-add_executable(Creakbox WIN32
-    ${CREAKBOX_SOURCES}
-    ${CREAKBOX_HEADERS}
+add_executable(Screambox WIN32
+    ${SCREAMBOX_SOURCES}
+    ${SCREAMBOX_HEADERS}
     src/resource.rc
 )
 
-target_include_directories(Creakbox PRIVATE src)
-target_link_libraries(Creakbox PRIVATE
+target_include_directories(Screambox PRIVATE src)
+target_link_libraries(Screambox PRIVATE
     ole32
     uuid
     comctl32
@@ -63,7 +65,7 @@ target_link_libraries(Creakbox PRIVATE
 )
 
 if(MSVC)
-    set_target_properties(Creakbox PROPERTIES
+    set_target_properties(Screambox PROPERTIES
         LINK_FLAGS "/MANIFESTUAC:\"level='asInvoker' uiAccess='false'\" /SUBSYSTEM:WINDOWS"
     )
 endif()

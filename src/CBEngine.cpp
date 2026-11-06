@@ -1,5 +1,5 @@
-// Creakbox DSP engine — lifted from src/SilverBox.cpp (Frank Reitz / Bioroid
-// 2004, BSD-2-Clause) with wwelti's DSP-loop optimizations, stripped of VST
+// Screambox DSP engine — lifted from src/SilverBox.cpp (Frank Reitz / Bioroid
+// 2004, BSD-style licence in license-bmd.txt) with wwelti's DSP-loop optimizations, stripped of VST
 // plumbing and adapted to a standalone realtime audio engine.
 //
 // The synth core (oscillator, 3-pole resonant LP via IIR.cpp, envelope,

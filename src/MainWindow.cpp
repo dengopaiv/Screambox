@@ -27,7 +27,7 @@
 #pragma comment(lib, "oleacc.lib")
 
 namespace {
-constexpr wchar_t kClassName[] = L"CreakboxMainWnd";
+constexpr wchar_t kClassName[] = L"ScreamboxMainWnd";
 
 std::wstring toWide(const std::string& s) {
     if (s.empty()) return {};
@@ -195,7 +195,7 @@ bool MainWindow::create() {
     HMENU menu = LoadMenuW(hInst_, MAKEINTRESOURCEW(IDR_MAIN_MENU));
 
     HWND h = CreateWindowExW(0, kClassName,
-        L"Creakbox — accessible 303 bassline",
+        L"Screambox — accessible bassline synth",
         WS_OVERLAPPEDWINDOW | WS_VISIBLE,
         CW_USEDEFAULT, CW_USEDEFAULT, 780, 672,
         nullptr, menu, hInst_, this);
@@ -813,7 +813,7 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                 wchar_t path[MAX_PATH]{};
                 OPENFILENAMEW ofn{ sizeof(ofn) };
                 ofn.hwndOwner = dlg;
-                ofn.lpstrFilter = L"Creakbox sweeps (*.hape)\0*.hape\0";
+                ofn.lpstrFilter = L"Screambox sweeps (*.hape)\0*.hape\0";
                 ofn.lpstrDefExt = L"hape";
                 ofn.lpstrFile = path;
                 ofn.nMaxFile = MAX_PATH;
@@ -845,7 +845,7 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                 wchar_t path[MAX_PATH]{};
                 OPENFILENAMEW ofn{ sizeof(ofn) };
                 ofn.hwndOwner = dlg;
-                ofn.lpstrFilter = L"Creakbox sweeps (*.hape)\0*.hape\0All files\0*.*\0";
+                ofn.lpstrFilter = L"Screambox sweeps (*.hape)\0*.hape\0All files\0*.*\0";
                 ofn.lpstrFile = path;
                 ofn.nMaxFile = MAX_PATH;
                 ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
@@ -1408,7 +1408,7 @@ void MainWindow::refreshPatternLabel() {
     // Title bar.
     if (hwnd_) {
         wchar_t title[160];
-        swprintf(title, 160, L"Creakbox — editing pattern %d of %d", editing, total);
+        swprintf(title, 160, L"Screambox — editing pattern %d of %d", editing, total);
         SetWindowTextW(hwnd_, title);
     }
 
@@ -1711,7 +1711,7 @@ void MainWindow::newRandomPattern() {
 void MainWindow::startNewTrack() {
     int resp = MessageBoxW(hwnd_,
         L"Clear all patterns and sweeps, and start a fresh track?",
-        L"Creakbox", MB_OKCANCEL | MB_ICONQUESTION);
+        L"Screambox", MB_OKCANCEL | MB_ICONQUESTION);
     if (resp != IDOK) return;
 
     engine_.setPatterns({ CbPattern{} });
@@ -2066,7 +2066,7 @@ void MainWindow::loadCbFile() {
     std::string err;
     auto preset = loadCb(fromWide(path), err);
     if (!preset) {
-        MessageBoxW(hwnd_, toWide("Failed to load: " + err).c_str(), L"Creakbox", MB_OK | MB_ICONERROR);
+        MessageBoxW(hwnd_, toWide("Failed to load: " + err).c_str(), L"Screambox", MB_OK | MB_ICONERROR);
         return;
     }
     if (!preset->patterns.empty()) {
@@ -2168,7 +2168,7 @@ void MainWindow::saveWavFile() {
         wcscpy_s(path, currentFile_.c_str());
         PathRenameExtensionW(path, L".wav");
     } else {
-        wcscpy_s(path, L"creakbox.wav");
+        wcscpy_s(path, L"screambox.wav");
     }
     OPENFILENAMEW ofn{ sizeof(ofn) };
     ofn.hwndOwner = hwnd_;
@@ -2210,7 +2210,7 @@ void MainWindow::saveWavFile() {
     renderEngine.setRunning(false);
     if (!ok) {
         MessageBoxW(hwnd_, toWide("WAV save failed: " + err).c_str(),
-                    L"Creakbox", MB_OK | MB_ICONERROR);
+                    L"Screambox", MB_OK | MB_ICONERROR);
         return;
     }
     char sb[256];
@@ -2243,7 +2243,7 @@ void MainWindow::saveCbFile() {
 
     std::string err;
     if (!saveCb(fromWide(path), p, err)) {
-        MessageBoxW(hwnd_, toWide("Save failed: " + err).c_str(), L"Creakbox", MB_OK | MB_ICONERROR);
+        MessageBoxW(hwnd_, toWide("Save failed: " + err).c_str(), L"Screambox", MB_OK | MB_ICONERROR);
         return;
     }
     currentFile_ = path;
@@ -2254,7 +2254,7 @@ void MainWindow::loadRoqFile() {
     wchar_t path[MAX_PATH]{};
     OPENFILENAMEW ofn{ sizeof(ofn) };
     ofn.hwndOwner = hwnd_;
-    ofn.lpstrFilter = L"Creakbox song (*.roq)\0*.roq\0All files\0*.*\0";
+    ofn.lpstrFilter = L"Screambox song (*.roq)\0*.roq\0All files\0*.*\0";
     ofn.lpstrFile = path;
     ofn.nMaxFile = MAX_PATH;
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
@@ -2263,7 +2263,7 @@ void MainWindow::loadRoqFile() {
     std::string err;
     auto song = loadRoq(fromWide(path), err);
     if (!song) {
-        MessageBoxW(hwnd_, toWide("Failed to load: " + err).c_str(), L"Creakbox", MB_OK | MB_ICONERROR);
+        MessageBoxW(hwnd_, toWide("Failed to load: " + err).c_str(), L"Screambox", MB_OK | MB_ICONERROR);
         return;
     }
 
@@ -2337,7 +2337,7 @@ void MainWindow::saveRoqFile() {
     }
     OPENFILENAMEW ofn{ sizeof(ofn) };
     ofn.hwndOwner = hwnd_;
-    ofn.lpstrFilter = L"Creakbox song (*.roq)\0*.roq\0";
+    ofn.lpstrFilter = L"Screambox song (*.roq)\0*.roq\0";
     ofn.lpstrDefExt = L"roq";
     ofn.lpstrFile = path;
     ofn.nMaxFile = MAX_PATH;
@@ -2394,7 +2394,7 @@ void MainWindow::saveRoqFile() {
 
     std::string err;
     if (!saveRoq(fromWide(path), song, err)) {
-        MessageBoxW(hwnd_, toWide("Save failed: " + err).c_str(), L"Creakbox", MB_OK | MB_ICONERROR);
+        MessageBoxW(hwnd_, toWide("Save failed: " + err).c_str(), L"Screambox", MB_OK | MB_ICONERROR);
         return;
     }
     currentFile_ = path;
@@ -2449,12 +2449,18 @@ void MainWindow::showKeyboardReference() {
 
 void MainWindow::showAbout() {
     MessageBoxW(hwnd_,
-        L"Creakbox\r\n"
-        L"Accessible TB-303 style bassline synth.\r\n\r\n"
-        L"Original DSP: Frank Reitz (a.k.a. Bass Assessor), 2002-2004.\r\n"
-        L"Published as open source by Bioroid Media Development under BSD-2-Clause.\r\n"
-        L"Accessible standalone shell: 2026.",
-        L"About Creakbox",
+        // The credit is the point of this box. The sound - filter, oscillator,
+        // envelope, accent - is the original CreakBox code, kept bit-identical
+        // on purpose, and the name changed so that nobody mistakes this program
+        // for that one, not to take credit for it.
+        L"Screambox\r\n"
+        L"Accessible bassline synth and step sequencer for Windows.\r\n\r\n"
+        L"Built on CreakBox by Frank Reitz (Bass Assessor), 2002, and its 2004 VST\r\n"
+        L"source, published by bioroid media development under a BSD-style licence\r\n"
+        L"(license-bmd.txt), with wwelti's DSP optimisations. The filter, oscillator,\r\n"
+        L"envelope and accent are theirs.\r\n\r\n"
+        L"Screambox, formerly Creakbox: (c) 2026 dengopaiv, BSD 3-Clause.",
+        L"About Screambox",
         MB_OK | MB_ICONINFORMATION);
 }
 

@@ -6,6 +6,9 @@
 
 namespace {
 
+// The program was called Creakbox when these were chosen. They stay: a reader
+// checks them before anything else, so renaming them would make every existing
+// .roq and .hape "not a .roq file".
 constexpr const char* kRoqMagic  = "CreakboxRoq";
 constexpr const char* kHapeMagic = "CreakboxHape";
 // v1: patterns + 9 params + sweeps.

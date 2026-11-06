@@ -5,7 +5,9 @@
 #include <string>
 #include <vector>
 
-// Creakbox native file formats.
+// Screambox native file formats. Their magic strings still say CreakboxRoq and
+// CreakboxHape: they predate the rename from Creakbox, and every saved song and
+// sweep file depends on them. Do not change them to match the new name.
 //
 // .roq — "song" file (Estonian *röök* = roar). Line-delimited text. Bundles
 //        patterns, slider values, and every sweep the user has drawn.
@@ -13,7 +15,7 @@
 //
 // Both formats are plain ASCII so they can be hand-inspected and diffed.
 // Version is bumped only on breaking schema changes; readers must tolerate
-// unknown trailing lines so older Creakbox builds don't choke on new fields.
+// unknown trailing lines so older builds don't choke on new fields.
 
 struct RoqSweep {
     int sliderIdx = 0;      // 0=Volume 1=Cutoff 2=Resonance 3=EnvMod 4=Decay 5=Accent 6=Tuning

@@ -10,13 +10,13 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) {
 
     if (!audio.start()) {
         MessageBoxA(nullptr, ("Audio startup failed: " + audio.lastError()).c_str(),
-                    "Creakbox", MB_OK | MB_ICONERROR);
+                    "Screambox", MB_OK | MB_ICONERROR);
         return 1;
     }
 
     MainWindow win(engine, audio, hInst);
     if (!win.create()) {
-        MessageBoxA(nullptr, "Failed to create main window.", "Creakbox", MB_OK | MB_ICONERROR);
+        MessageBoxA(nullptr, "Failed to create main window.", "Screambox", MB_OK | MB_ICONERROR);
         return 1;
     }
 

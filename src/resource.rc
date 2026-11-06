@@ -1,3 +1,9 @@
+// This file is UTF-8. Without the pragma rc.exe reads it in the system ANSI code
+// page and any non-ASCII text comes out garbled - the em dash in FileDescription
+// showed as "â€”" in Explorer's Details tab, and a screen reader reads a label the
+// same way. Every visible string here is ASCII today; this keeps the next one safe.
+#pragma code_page(65001)
+
 #include <windows.h>
 #include "resource.h"
 
@@ -69,7 +75,7 @@ BEGIN
     POPUP "&Help"
     BEGIN
         MENUITEM "&Keyboard reference\tF1",     IDM_HELP_KEYS
-        MENUITEM "&About Creakbox...",          IDM_HELP_ABOUT
+        MENUITEM "&About Screambox...",          IDM_HELP_ABOUT
     END
 END
 
@@ -245,13 +251,13 @@ BEGIN
     BEGIN
         BLOCK "040904b0"
         BEGIN
-            VALUE "CompanyName",      "Creakbox project"
-            VALUE "FileDescription",  "Creakbox — accessible TB-303 style bassline"
+            VALUE "CompanyName",      "Screambox project"
+            VALUE "FileDescription",  "Screambox — accessible bassline synth, built on CreakBox"
             VALUE "FileVersion",      "0.1.0.0"
-            VALUE "InternalName",     "Creakbox"
-            VALUE "LegalCopyright",   "Original DSP (c) 2004 Frank Reitz / Bioroid Media Development, BSD-2-Clause. Standalone shell (c) 2026."
-            VALUE "OriginalFilename", "Creakbox.exe"
-            VALUE "ProductName",      "Creakbox"
+            VALUE "InternalName",     "Screambox"
+            VALUE "LegalCopyright",   "Screambox (c) 2026 dengopaiv, BSD 3-Clause. Built on CreakBox (c) 2002-2004 Frank Reitz / bioroid media development, BSD-style licence."
+            VALUE "OriginalFilename", "Screambox.exe"
+            VALUE "ProductName",      "Screambox"
             VALUE "ProductVersion",   "0.1.0.0"
         END
     END
