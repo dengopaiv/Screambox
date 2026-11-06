@@ -5,6 +5,11 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Static C/C++ runtime: Creakbox ships as one exe, and with the default DLL
+# runtime it would not start on a machine without the Visual C++
+# redistributable (MSVCP140.dll / VCRUNTIME140.dll). Set before any target.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 if(MSVC)
     add_compile_options(/W3 /permissive- /utf-8 /Zc:__cplusplus)
     add_compile_definitions(UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)

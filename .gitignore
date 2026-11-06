@@ -1,5 +1,6 @@
 # Build output
 build/
+/dist/
 
 # Local tooling settings
 .claude/settings.local.json
