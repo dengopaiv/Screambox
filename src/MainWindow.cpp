@@ -1008,7 +1008,7 @@ static const wchar_t* kDistNames[] = {
     L"RAT (hard clip, dark filter)",
     L"Screamer (soft clip, mid push)",
     L"Dist+ (hard clip, bright)",
-    L"Fuzz (asymmetric, gated)",
+    L"Fuzz (asymmetric, germanium)",
 };
 
 void MainWindow::openDistortionDialog() {

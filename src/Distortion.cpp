@@ -119,7 +119,15 @@ double cbDistProcess(const CbDistCoeffs& c, CbDistState& s, double x) {
         case CbDistType::DistPlus: v = hardClip(v, 0.7); break;
         case CbDistType::Screamer: v = softClip(v) * 0.9; break;
         case CbDistType::Fuzz:
-            v = hardClip(v + c.bias, 0.55) - c.bias * 0.5;
+            // Subtract what the clipper outputs for SILENCE, hardClip(bias),
+            // not half the bias. The old `- bias * 0.5` left +0.09 of DC on
+            // every rest - harmless alone, but the ring modulator after this
+            // multiplies it into a carrier tone that played through the rests,
+            // louder than the notes. Same waveform shape, same asymmetry
+            // (clips at +0.37 / -0.73); only the constant offset is gone, and
+            // with no filter state there is nothing for the per-pattern reset
+            // to turn into a thump.
+            v = hardClip(v + c.bias, 0.55) - hardClip(c.bias, 0.55);
             break;
         default: break;
     }
