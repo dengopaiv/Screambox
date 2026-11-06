@@ -43,15 +43,16 @@ custom accessible object. The only accessibility API used is `NotifyWinEvent`.
 - **A selection you change in code needs its `WM_COMMAND` sent by hand**, then a notify.
   The note combobox's octave jump is the worked example.
 - **Run `tools/check_keyboard.py` after any change to `resource.rc` or a control label.**
-  It catches all six ways a key can silently do nothing here, each of which has shipped at
-  least once: a chord bound twice, an unmodified key bound as an accelerator, two controls
+  It catches all seven ways a key can silently do nothing here, each of which has shipped
+  at least once: a chord bound twice, an unmodified key bound as an accelerator, two controls
   sharing a mnemonic, a mnemonic shadowed by an accelerator or by the menu bar, two items in
-  one menu popup sharing a mnemonic, and - the one the other five cannot see - **a menu item
-  or accelerator whose command id no `case` handles**, which `DefWindowProc` swallows in
-  silence while the menu item stays enabled and F1 goes on documenting it. Copy, Cut and
-  Paste pattern were all three dead that way from the beginning. The first five checks ask
-  whether the keystroke *arrives*; the sixth asks whether anything is listening when it
-  does.
+  one menu popup sharing a mnemonic, two controls in one **dialog** sharing a mnemonic (the
+  sweep editor had two, on Alt+N and Alt+T, while the checker looked only at the main
+  window), and - the one the others cannot see - **a menu item or accelerator whose command
+  id no `case` handles**, which `DefWindowProc` swallows in silence while the menu item
+  stays enabled and F1 goes on documenting it. Copy, Cut and Paste pattern were all three
+  dead that way from the beginning. The other checks ask whether the keystroke *arrives*;
+  that one asks whether anything is listening when it does.
   **Precedence is menu bar, then accelerators, then mnemonics**, and every loser fails
   silently. `F`, `E`, `P`, `H` and `L` belong to the menus. No plain `Alt+letter` is bound
   as an accelerator any more, and keeping it that way is what makes the shadowing class
@@ -122,22 +123,40 @@ shows up later as "it sounds different now" with no obvious cause.
    RNG must not advance at level 0, or invariant 4 stops holding for it.
 6. Sweeps are evaluated once per sequencer step. Anything that needs per-sample
    resolution is not a sweep.
-   - **`samplesPerStep_` is a per-BLOCK value but the step duration is a per-PATTERN
-     property**, and the sequencer changes pattern *inside* the sample loop. Any change to
-     what a step is worth must be recomputed at the pattern switch as well as at the top of
-     the block (`stepSamples()` is called in both places). Miss the second one and a triplet
-     pattern following a straight one runs at the wrong rate for up to a whole buffer - a
-     flam on beat 1, once per loop, that moves with the audio buffer size and gets blamed on
-     the sound card. The harness renders the same song at 32, 64, 512 and 1024 frames and
-     requires identical onsets; the bug is invisible at any single block size.
-   - **A sweep endpoint is normalised by the length of the pattern it names**, not by the
-     length of the one currently playing (`posOf` in `process()`). While every pattern was
-     16 steps those were the same number and the distinction did not exist. Once lengths
-     vary it matters a lot: dividing "pattern 0, step 15" by a 4-step pattern's length gives
-     3.75 and relocates the endpoint three patterns downstream, so a sweep keeps running
-     long after its pattern has finished. Anything else that maps (pattern, step) onto a
-     timeline needs the same care — `sweepsOverlap` in `MainWindow.cpp` uses a stride of 64,
-     the maximum pattern length, for the same reason.
+   - **Nothing that changes at a step boundary may wait for the next block.** This is the
+     one rule behind two bugs that each "moved with the audio buffer size". The knob values
+     (`Knobs`, `deriveKnobs()`) used to be derived only at the top of `process()`, so a
+     sweep's new value - written at a step boundary in the middle of a block - waited for
+     the next block and every note started with the previous step's value. And the step
+     length: `samplesPerStep_` used to be per block while the step duration is a per-PATTERN
+     property, so a triplet pattern after a straight one ran at the wrong rate for up to a
+     buffer - a flam on beat 1. Both are now recomputed at the step boundary as well as at
+     the top of the block. **Sweeps are evaluated before `triggerStep()`**, so the reversed
+     envelope's seed sees the swept Decay. The test is the same for both: render at 32, 64,
+     512 and 1024 frames and require identical output; the bugs are invisible at any single
+     block size.
+   - **Sweep values never go into `params_`.** They live in `sweptVal_` / `sweptOn_`,
+     written only by the audio thread, cleared on stop and start. `params_` is the user's
+     setting and nothing else - when sweeps wrote into it, Save and the WAV export picked
+     up whatever a sweep was doing as if it were the slider, and Stop left it there.
+   - **A sweep position is an absolute step number**, `patStart[p] + step`, with
+     `patStart` a prefix sum computed in `SongWriter::commit()` (UI thread; the audio thread
+     only reads it). A sweep therefore advances the same amount per step across patterns of
+     any length. An endpoint is clamped into the pattern it names, so shortening a pattern
+     under a sweep does not fling it downstream. Anything else that maps (pattern, step) onto
+     a timeline needs the same care — `sweepsOverlap` in `MainWindow.cpp` uses a stride of
+     64, the maximum pattern length, which is enough for ordering though not for distance.
+   - **The step length is fractional.** `exactStepSamples()` is rarely whole; each step is
+     `floor(exact + stepFrac_)` and passes the remainder on, so the tempo cannot drift.
+     Where the exact length is whole (44.1 kHz at 140 BPM) `stepFrac_` stays 0 and every
+     step is what it always was - that is the off-path proof. `songLengthSamples()` repeats
+     the same arithmetic for the WAV export; change one and you must change the other (the
+     harness checks they agree).
+   - **Playback follows a pattern by identity, not index.** `SongData::patIds` gives each
+     pattern a stable id; when a commit inserts or deletes patterns in front of the playing
+     one, `process()` finds it again by id. Writers that replace the whole pattern list call
+     `freshIds()`; `reindex()` regenerates ids if a writer forgot, rather than letting the
+     vectors disagree.
 7. **The acid FX block's state rules are not all the same, and the differences matter.**
    Distortion, compressor and ring modulator all sit after the volume envelope, in that
    order. The compressor is deliberately *before* the ring: its follower would otherwise
@@ -189,6 +208,16 @@ shows up later as "it sounds different now" with no obvious cause.
      It also never reads or writes EnvMod at all, which is what makes it compose cleanly
      with sweeps aimed at that parameter.
 
+9. **The per-pattern filter reset is skipped while a slide carries a note across the bar
+   line** (`if (currentStep_ == 0 && !bNoteSlide_) resetFilters();`). The reset itself is
+   2004's ("reset filter every 16 steps") and stays; but zeroing the gate, the filter
+   memories and the oscillator under a note that is still sounding is a click, and it threw
+   the glide away. Everything that looks ahead uses `nextPlayedStep()` - next pattern's step
+   0 in FullSequence, the same pattern's in loop mode - so the slide decision, the glide
+   target and `audibleNoteLength()`'s tie walk can no longer disagree at the bar line, which
+   they did for as long as the reset hid it. Invariant 1 is untouched: `pwmLfoPhase_` is
+   reset by neither path.
+
 ## How engine changes get verified
 
 The standard here is a bit-exact comparison, and it is worth the setup:
@@ -239,9 +268,10 @@ only because it grows by appending tokens.
   every new field a default that means "off" so older files load sounding identical.
 - **The version stamped is the lowest one that can represent the song, not the newest.**
   `neededVersion` in `RoqIO.cpp` decides. A song that uses nothing newer than v9 writes
-  exactly the bytes v9 wrote and still opens in an older build. Three rules feed it so far:
+  exactly the bytes v9 wrote and still opens in an older build. Four rules feed it so far:
   a pattern that is not 16 steps forces v10, any acid-FX field that differs from its default
-  forces v11, and any pattern in triplet mode forces v12. **Extend that function rather than
+  forces v11, any pattern in triplet mode forces v12, and any sweep that holds its end value
+  forces v13. **Extend that function rather than
   bumping a constant**, and make the writer's field blocks `if (version >= N)` mirror the
   reader's exactly - a file stamped 9 that carries v11's lines would have those read as the
   pattern count.
@@ -258,9 +288,10 @@ only because it grows by appending tokens.
   *needs*, so compatibility is lost only by the files that really lost it.** And check the
   shipped modules still write as the old version; the test for that walks all 25.
 - **`.hape` has its own pinned version** (`kHapeVersion`) even though it shares the
-  counter's history. Its schema has not changed since v1; stamping a sweep export with a
+  counter's history. Its schema did not change until v13; stamping a sweep export with a
   number no older build accepts, to describe a change that did not happen to it, is a
-  compatibility break for nothing.
+  compatibility break for nothing. When v13 did change it (the hold token), it got the same
+  content rule as `.roq`: 9 unless some sweep holds, 13 only then (`kHapeHoldVersion`).
 - **Extend a line with an extra token** rather than changing its shape — an older
   three-token parser then still reads the first three correctly. This is how the per-step
   reverse-step column was added.

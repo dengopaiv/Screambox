@@ -1,20 +1,369 @@
 # Creakbox — outstanding work
 
-All independent now. G took `.roq` v9, B took v10 and H took v11; nothing outstanding
-wants a format change. Line references are current as of 2026-09-04.
+G took `.roq` v9, B took v10, H took v11, K took v12 and O took v13. Nothing outstanding
+wants a format change. Line references are current as of 2026-09-04 for E–K and
+2026-11-06 for L–W (they describe the code *before* the fix, which is what the evidence was
+taken against).
 
 Background on any of it is in `README.md` (what the program does) and `CLAUDE.md` (the
 invariants and the traps). Rounds 1–3 — the PWM LFO, noise / resonance boost / reverse
 step, and the documentation plus keyboard rework — are done and verified.
 
-**Everything on this list is done:** ~~E~~, ~~A~~, ~~J~~, ~~G~~, ~~B~~, ~~H~~, ~~I~~, ~~C~~,
-~~F~~, ~~K~~.
+**Done:** ~~E~~, ~~A~~, ~~J~~, ~~G~~, ~~B~~, ~~H~~, ~~I~~, ~~C~~, ~~F~~, ~~K~~, and from
+the 2026-11-06 source study ~~L~~, ~~M~~, ~~N~~, ~~O~~, ~~P~~, ~~Q~~, ~~R~~, ~~S~~, ~~T~~,
+~~U~~, ~~V~~, ~~W~~ — every decision in those is Dengo's, taken after the study.
 
-The honest gap is that **almost none of it has been heard** — only the resonance boost and
-the PWM LFO have been confirmed by ear. Everything else is verified numerically and nothing
-more. That list is at the bottom of this file, and it is the whole of the outstanding work.
+**Nothing is open in code.** What remains is listening and screen-reader checks, at the
+bottom of this file — the 2026-11-06 round added to that list.
+
+The honest gap is that **almost none of the done work has been heard** — only the resonance
+boost and the PWM LFO have been confirmed by ear. That list is at the bottom of this file.
 
 ---
+
+# 2026-11-06 source study — RESOLVED 2026-11-06
+
+**How these were found.** A read of every compiled source, plus a throwaway headless probe
+built against the live `src/` (it lived in a session scratchpad and is gone; each item says
+enough to rebuild its test). Items marked *measured* were confirmed by that probe; the rest
+come from reading the code.
+
+**Suggested order:** L first (it is the root of M's "swept values" problem and changes
+what P builds on), then M, O's mnemonics, W's rounding, S, N, P, Q, T, U, R, V.
+Each round gets the standard from `CLAUDE.md`: a reconstructed previous engine, a
+bit-exact off-path proof per feature, both `tools/` checks.
+
+**Golden renders that legitimately changed**, so nobody mistakes them for regressions:
+any render with a sweep (L), with a sweep spanning patterns of different lengths (P), with a
+slide on a pattern's last step (Q), with pitch 52 (T), with Fuzz selected (S), and at any
+sample rate / tempo where a step is not a whole number of samples (U).
+
+**How the round was verified.** The baseline was the committed tree (`git show HEAD:`), not
+a reverse-applied patch — the same thing, obtained without the reconstruction step that
+could go wrong. One harness source built twice, the new APIs behind `#ifdef`:
+
+- **Off-path proofs, byte-identical to HEAD:** plain, saw, reverse step (including a tie
+  inside a pattern), triplet (straight 16 → triplet 12), mixed lengths (4 / 23 / 16), Rat,
+  compressor, ring, the oscillator extras together (PWM LFO, duplet, sub, noise), resonance
+  boost, loop-one-pattern, accent squelch 0. Twelve of twelve.
+- **Every decided change differs from HEAD**, each in its own render: Fuzz (S), two sweep
+  modes (L), last-step slide (Q), pitch 52 (T), 48 kHz (U), a sweep over mixed lengths (P).
+- **Unchanged songs write unchanged bytes:** .roq at v9, v10, v11 and v12 and a .hape are
+  byte-identical to what HEAD writes.
+- Both `tools/` checks pass; Release builds with no warnings; the app starts and closes
+  with exit code 0.
+
+---
+
+## L. Sweeps land late, and leak into `getParam()` — RESOLVED 2026-11-06 (decided: fix)
+
+Two bugs with one root: the audio thread writes sweep values into `params_`, the same
+atomics the UI reads and the same ones it reads itself only once per block.
+
+1. **A swept value applies up to one audio buffer late** *(measured)*. `process()` derives
+   `knobVolume`, `knobCutoff`, `pre_knobRezo`, `knobEnvMod`, `decayMul`/`decayMulInv`,
+   `knobAccent` and `two_power_knobTune` once at the top of the block
+   (`CBEngine.cpp:612-639`). The sweep is evaluated at the step boundary inside the sample
+   loop and stored to `params_` (`:797`), which nothing reads again until the next
+   `process()` call. So each note plays its first 0..`frames` samples with the previous
+   step's value. Same rendering at 32 vs 512 frames per block: byte-identical with no
+   sweep; with a sweep, peak difference 0.26 (Volume), 0.23 (Cutoff), 0.18 (Tuning)
+   against a signal RMS of ~0.05. On Tuning that is a pitch blip at every note start; on
+   Cutoff it lands on the attack. Same class as the triplet flam in `CLAUDE.md` invariant 6,
+   and the K test cannot see it because it compares onsets only.
+2. **Swept values become the "slider" value** *(measured)*. Slider 0.15, sweep holding
+   0.90: `getParam(Cutoff)` returns 0.90 while playing **and after Stop**, since nothing
+   restores it. `saveRoqFile` (`MainWindow.cpp:2159`) and `saveWavFile` (`:1993`) read
+   `getParam`, so a song saved after playing stores the swept value as its slider setting
+   and sounds different outside the sweep when reopened.
+
+**Approach.**
+- Keep sweep overrides in audio-thread-only fields (e.g. `float sweepVal_[7]`,
+  `bool sweepOn_[7]`), written only in `process()` — `check_dsp_ownership.py` accepts that.
+  `params_` then always holds the user's setting; `baseParam_` and the per-step restore go
+  away, Stop needs no restore, and the setParam-vs-restore race closes.
+- At the step boundary, evaluate sweeps **before** `triggerStep()` and the reverse-step
+  seed (so a reversed step is sized with the swept Decay), then recompute the derived knob
+  values right there. One function computes them, called at the block top and per step.
+- The legacy `.cb` path (`sweepsOn`, inert) writes `params_` too; move it onto the same
+  override fields so it cannot reintroduce the leak if it is ever switched on.
+
+**Acceptance.** Golden modes without sweeps stay byte-identical (same floats in, same
+expressions). New: a sweep render must be byte-identical at 32, 64, 512 and 1024 frames per
+block. `getParam()` returns the slider value during and after a sweep. `test_a alloc` still
+0.
+
+**Done.** As described; `baseParam_` is gone. **Verified:** a two-sweep render (Cutoff and
+Tuning) is byte-identical at all four block sizes. A Cutoff sweep rendered at 512 frames
+against HEAD rendered at **1** frame - where the old lag is at most a sample - differs by
+0.021, against 0.61 for HEAD at 512: what changed is the lag and nothing else. Slider 0.15
+under a sweep holding 0.90 reads 0.15 during playback and after Stop. 0 allocations over
+400 blocks with every sweep list, holds, slides and FX populated.
+
+## M. WAV export: no sweeps, wrong length — RESOLVED 2026-11-06 (decided: fix)
+
+`saveWavFile` (`MainWindow.cpp:1971`):
+- The render engine never receives the interactive sweeps — no `setParamSweeps` call — so
+  **an exported WAV has no sweeps at all**.
+- Length is `samplesPerStep * 16 * patternCount` (`:1997`), ignoring `lastStep` and
+  triplet: 4-step patterns render 4x too long (wrapping into the song again), 64-step ones
+  stop a quarter of the way through.
+- Parameters are copied from `getParam()` — the swept value until L lands.
+- Default path `c:\cb303.wav` is normally not writable; start from the current song's name
+  and folder instead.
+
+**Approach.** One helper that copies the whole song (patterns, base params, all seven sweep
+lists) into another engine, used here; it also replaces the four hand-written
+UI-sweep → engine-sweep conversion loops, which is how this one got forgotten. Expose
+`stepSamples` (or the U accumulator) publicly and sum per pattern for the length.
+
+**Acceptance.** Exported WAV of a sweep song equals a harness render of the same song; length
+equals the summed pattern durations for mixed lengths and triplet patterns.
+
+**Done.** `pushSweeps()` / `pushAllSweeps()` are the only conversion now, used by the editor,
+.roq load, pattern edits and the export. Length is `CBEngine::songLengthSamples()`; the
+render streams to disk in 512-frame blocks and reports a failed write (deleting the partial
+file) instead of announcing success. **Verified:** `songLengthSamples()` equals the
+sequencer's own count (185 142 samples for a triplet 12 / 4 / 16 song at 48 kHz). *Not*
+verified: an export from the running app compared against a harness render - the export
+path is UI-driven.
+
+## N. Pattern insert / delete shift sweeps and move the playhead — RESOLVED 2026-11-06 (decided: fix, clamp)
+
+- `addPatternAfterCurrent` / `deleteCurrentPattern` (`MainWindow.cpp:1420`, `:1692`) never
+  remap sweep endpoints, though sweeps address patterns by index (the Cut comment at
+  `:1445` says exactly this). Every sweep after the edit point silently moves.
+- Both call `engine_.selectPattern(editingIdx_)`, which is the **playback** index. During
+  playback, Ctrl+Shift+P jumps playback to the new empty pattern; delete jumps it to
+  whatever now sits at that index. (From reading; not measured.)
+
+**Decided (Dengo):** on delete, endpoints inside the deleted pattern **clamp to the nearest
+surviving boundary**, sweeps lying entirely inside it are removed, and the status line says
+how many sweeps were adjusted or removed. On insert, endpoints at or after the new slot
+shift by one.
+
+**Also decided:** **Import .cb and New random pattern (Ctrl+N) clear the interactive
+sweeps**, like Start new track — both are "new song" actions, and today they keep the old
+song's sweeps, pointing at patterns that may not exist. Say so in their status messages.
+
+**Approach.** Engine API `insertPatternAfter(idx)` / `deletePattern(idx)` that take the
+index explicitly and adjust `patternIdx_` so the *playing* pattern stays the same pattern.
+
+**Done, differently in one respect.** Adjusting `patternIdx_` from the UI thread races the
+audio thread, which also writes it at every pattern change. Instead each pattern has a
+stable id (`SongData::patIds`) and the audio thread finds the playing pattern again by id
+whenever a commit lands - see `CLAUDE.md` invariant 6. **Verified:** playing index 2,
+insert a pattern before it → 3, delete the first → 2; deleting the playing pattern continues
+with the one in its place. Stress: 60 000 32-frame blocks against ~70 000 random inserts,
+deletes, edits (with last-step slides and triplets), sweep writes and song replacements,
+plus a transport thread: finite and inside ±1 throughout.
+
+## O. Sweep editor — RESOLVED 2026-11-06 (decided: fix, plus per-sweep hold and swept labels)
+
+1. **Two mnemonic collisions** *(measured)*: `Sweep &number` / `End patter&n` (Alt+N) and
+   `Start s&tep` / `Pas&te` (Alt+T), `resource.rc:144/154`, `148/166`. Each cycles focus
+   instead of activating. One assignment that works: `En&d pattern`, `Save to &file...`,
+   `Pa&ste`. **Extend `tools/check_keyboard.py` to every DIALOGEX**, not just the main
+   window — it passed with these in place. The oscillator and Acid FX dialogs are clean today.
+2. **No way to edit an existing sweep.** Only Add and Remove; Add overlap-checks against the
+   very sweep being viewed. Add an **Update** button that replaces the selected sweep,
+   overlap-checked against the others.
+3. **A backwards sweep is accepted and never plays.** `sweepsOverlap` swaps the ends, so Add
+   accepts end-before-start, but the engine's `songPos < start || songPos > end` never
+   matches it. Reject with a status message.
+4. **Cancel behaves as OK** — Add/Remove mutate `paramSweeps_` in place. Snapshot on
+   `WM_INITDIALOG`, restore on `IDCANCEL`.
+5. Value and count labels change via `SetWindowTextW` without `EVENT_OBJECT_NAMECHANGE`.
+6. A sweep naming a pattern that does not exist (old `.hape`, or orphaned) leaves
+   `CB_SETCURSEL` failed, and Add then stores pattern −1. Validate in `readSweepFromDialog`.
+7. **Per-sweep "hold end value" — decided (Dengo).** A checkbox in the editor: *Hold end
+   value until the next sweep*. Off is today's behaviour (snap back to the slider). With it
+   on, the end value stays until the next sweep on the same slider starts.
+   **Format:** an appended eighth token on the sweep line (`... endVal hold`). Older readers
+   use `istringstream >>` for seven fields and ignore the rest, so the line stays readable
+   both ways — the step-line trick. `neededVersion` stamps **v13** only when some sweep
+   holds. `.hape`'s pinned `kHapeVersion` moves too, but only when a held sweep is written
+   (same "what the file needs" rule).
+   Engine: "hold" means the most recent sweep that ended before `songPos` and holds applies
+   when no sweep covers it. Order matters across a song wrap — define it as "since the song
+   started", so pattern 1 before the first sweep always gets the slider value.
+8. **Swept label on the main window — decided (Dengo).** A slider with sweeps says so in its
+   value label: `Cutoff +15% (2 sweeps)`. Updated when sweeps change, never per step, so it
+   does not chatter. Today nothing tells a screen-reader user that moving the slider is
+   undone at the next step.
+
+**Done, all eight.** The editor is now: number, start pattern / step / value, end pattern /
+step / value, **Hold** (`Alt+H`), then Add / **Update** (`Alt+U`) / Remove / Copy /
+**Pa&ste** / **Save to &file** / Load. `End pattern` moved to `Alt+D`. Hold is subclassed so
+Enter toggles it - in a dialog, Enter otherwise presses OK and closes the editor. A sweep
+naming a missing pattern is shown at the nearest real one with the status saying so.
+**One deviation on 8:** the count goes in the slider's **name** (`Cutoff (2 sweeps)`, both
+the label and the trackbar text), not its value label, because the name is what a screen
+reader reads on focus and the value label is a separate static nobody lands on.
+**Verified:** the new seventh check in `check_keyboard.py` failed on the old dialog (both
+collisions) and passes now; `.roq` and `.hape` round-trip a held sweep and stamp 13; a
+seven-token line loads as not held; songs without holds still write their old bytes. Hold in
+the engine: between a held sweep ending at 20 % and the next sweep, the level holds at 0.200
+of the slider's; without hold it snaps back. *Not* verified: any of the dialog by hand.
+
+## P. Sweep pace — RESOLVED 2026-11-06 (decided: even per step)
+
+Sweep progress is linear in *pattern units* today: each pattern counts as 1.0 whatever its
+length or triplet flag (`songPos = patIdx + step / stepsPerPat`). A sweep over a 4-step
+pattern then a 16-step pattern spends half its travel in the short one.
+
+**Decided (Dengo): even per step.** Each step advances a sweep by the same amount, which is
+also how the editor names endpoints. **Approach:** a prefix-sum of pattern lengths
+(`patStartStep[]`) computed in `SongWriter::commit()` on the UI thread and stored in
+`SongData`, so the audio thread stays allocation-free; endpoints and the current position
+become absolute step numbers. Keep the per-endpoint clamp from B. Sweeps inside one pattern,
+or across patterns of equal length, render exactly as before — say so in the acceptance test.
+
+**Done.** **Verified:** a Volume sweep 0 → 100 over a 4-step and a 16-step pattern gives each
+of the 20 steps exactly k/19 of full level (worst deviation 0.0000). For 16-step patterns the
+old pattern-unit arithmetic was exact (steps are powers-of-two fractions), so the new integer
+form gives identical values there; for other equal lengths it can differ in the last bit.
+
+## Q. Slides across the bar line — RESOLVED 2026-11-06 (decided: glide across (option A))
+
+*(measured)* A slide on a pattern's last step never glides, and the bar line clicks:
+- `triggerStep` gets `nextStep` from the **same** pattern (`CBEngine.cpp:716`), so the
+  slide decision looks at this pattern's step 1;
+- the glide target peeks at the **next** pattern (`:1065-1071`) — and in loop-one-pattern
+  mode that is the wrong pattern;
+- neither matters, because `resetFilters()` at step 0 (`:719`) clears `bNoteSlide_` /
+  `boxSlide_` and forces `boxGate_ = 0` and the filter memories while the gate is still
+  fully open. Largest sample-to-sample jump at the wrap: 0.065 with the slide, 0.0078
+  without.
+
+Random patterns put a slide on the last step 5–60 % of the time depending on wildness, so
+this is common. 2004 was broken here too, differently: its `CBReset` left `bNoteSlide` set
+and zeroed `boxOscFrq`.
+
+**Decided (Dengo): option A.** The slide glides into step 1 of the pattern that will actually
+play next (same pattern when looping or in pattern-only mode). **Approach:** resolve "the
+next step" once — next pattern's step 0 in FullSequence, own step 0 in CurrentPatternOnly —
+and use it for `bSlideNext_`, the glide target and `audibleNoteLength`'s tie walk (which
+must then walk into the next pattern, with its own `samplesPerStep` if the triplet flag
+differs). At a pattern start that continues a tie, skip the parts of `resetFilters()` that
+would break the note (filters, oscillator phases, gate, slide state); the rest of the reset
+still runs. **Invariant 1 still holds** — the PWM LFO phase stays out of it.
+**Acceptance:** a slide on the last step glides with no discontinuity at the wrap; patterns
+without a last-step slide are byte-identical.
+
+**Done.** `nextPlayedStep()` is the single look-ahead; the reset is skipped during a tie, and
+in the end "the rest of the reset" turned out to be nothing - every field it touches belongs
+to the note. **Verified:** largest sample jump at the bar line 0.064 against 0.065 within the
+same note (it was 8× the within-note figure before); with the filter open, a slide up an
+octave crosses zero 15 times in the first step against 21 for a retrigger at the target, so
+the pitch arrives gradually. Looping one pattern with a last-step slide stays bounded. All
+twelve no-last-slide golden modes byte-identical.
+
+## R. MIDI input — RESOLVED 2026-11-06 (decided: remove)
+
+*(measured)* `noteOn`/`noteOff` store `midiNote_`/`midiVel_` (`CBEngine.cpp:273-282`) and
+`process()` never reads them: a MIDI keyboard produces silence. The README claims otherwise.
+
+**Decided (Dengo): remove it.** `src/MidiInput.*`, its CMake entries, `winmm` if nothing else
+needs it (the sequencer does not), the `WinMain` start-up and the `MainWindow` member, the
+engine's `noteOn`/`noteOff`/`midiNote_`/`midiVel_`, and the README "MIDI in" bullet. The
+engine change touches no DSP path, so all golden modes stay byte-identical.
+
+**Done**, `winmm` included - nothing else used it. Golden modes byte-identical.
+
+## S. Fuzz leaves DC at rest — RESOLVED 2026-11-06 (decided: fix)
+
+*(measured)* `hardClip(v + bias, 0.55) - bias * 0.5` (`Distortion.cpp:122`) outputs +0.09
+when the input is silent: mean 0.0900 over a second of rests. With the ring modulator on
+(300 Hz, amount 1) that becomes a 300 Hz tone **during rests** at RMS 0.064 — louder than
+the notes. The combo even calls Fuzz "gated".
+
+**Approach.** A one-pole DC blocker (~10 Hz) after the Fuzz clipper — what a real pedal's
+output coupling capacitor does. Keeps the asymmetric voicing during notes. Classic is
+untouched; the other three models are untouched.
+**Acceptance:** rests through Fuzz have |mean| < 1e-4; with the ring on, rest RMS < 1e-4.
+
+**Done, without the DC blocker.** The offset was a constant - the clipper's output for
+silence, `hardClip(bias) - bias/2` - so the fix subtracts exactly `hardClip(bias)` instead.
+Same waveform, same asymmetry, zero at rest, and no filter state: a DC blocker's state would
+be zeroed by the per-pattern reset and make a small thump on every bar line. The combo now
+calls it "Fuzz (asymmetric, germanium)" - it was never gated. **Verified:** Fuzz + ring over a
+bar of rests is **exactly** 0.0, not merely below 1e-4. A blocker for the *signal-dependent*
+DC that asymmetric clipping makes while notes sound is a separate, audible choice, not made.
+
+## T. Note-table typo inherited from 2004 — RESOLVED 2026-11-06 (decided: fix)
+
+`cNoteFreq[52] = 2389.016` should be **2489.016** (`CBEngine.cpp:30`; the reference
+`SilverBox.cpp:35` has the same value). The UI calls it D#4; it plays ~71 cents flat.
+Chromatic random and transposition both reach it. Correct it and comment the deviation from
+2004 at the table, so nobody "restores" it from the reference source.
+
+**Done.** Verified: the pitch-52 render differs from HEAD; nothing else does.
+
+## U. Exact tempo — RESOLVED 2026-11-06 (decided: fractional step counter)
+
+Step length is truncated to whole samples (`stepSamples`, `CBEngine.cpp:525`), so tempo runs
+slightly fast whenever `sr·60/(bpm·4)` is not whole: at 48 kHz / 140 BPM a step is 5142
+instead of 5142.86 samples — ~50 ms of drift over 5 minutes against a DAW, and 12 triplet
+steps (82 284) do not equal a 16-step bar (82 272). K's verification ran at 44.1 kHz / 140,
+where both happen to be exact.
+
+**Approach.** A fractional accumulator; each step's length is the rounded difference of
+cumulative positions, so the bar total is exact. The gate threshold, `audibleNoteLength` and
+the slide rate keep using the current step's integer length. The accumulator resets on
+transport start, and on tempo change it re-anchors rather than jumping. **44.1 kHz / 140 must
+stay byte-identical** (steps already whole) — that is the off-path proof.
+
+**Done.** **Verified:** ten bars at 48 kHz / 140 BPM take 822 857 samples straight *and*
+triplet, against an exact 822 857.1. Every 44.1 kHz golden mode is byte-identical.
+
+## V. Audio device loss — RESOLVED 2026-11-06 (decided: reopen automatically)
+
+Any WASAPI failure in `AudioEngine::renderThread` (unplugging headphones gives
+`AUDCLNT_E_DEVICE_INVALIDATED`) `break`s the loop and the thread exits silently; the status
+line keeps saying "Playing". **Decided (Dengo):** reopen the current default output device
+and announce `Audio device changed — now <name> at <rate> Hz.` through `announceValue`. If the
+sample rate changes, the engine gets the new rate on the audio thread before it next renders.
+Also: `sampleRate_` and `lastError_` are read by the UI thread while the render thread writes
+them; make the rate atomic and hand errors over safely.
+
+**Done.** The render thread runs sessions: open the default endpoint, render, and on any
+WASAPI failure - or a timeout on which the padding query fails, since a vanished device can
+simply stop signalling - close everything, announce, and retry every half second. The rate
+is an atomic, the name and error are copied out under a mutex `process()` never sees. Also:
+an extensible mix format is now checked to be float, not just assumed. **Also, decided after the round (Dengo):** it follows the Windows default
+output. An `IMMNotificationClient` raises a flag on a default-render change and the session
+reopens on the new device at once, with no "lost" phase. **Not verified:** pulling a device
+out or switching the default - both need hardware and a person.
+
+## W. Small fixes — RESOLVED 2026-11-06
+
+- **Slider positions drift on load** (simulated in float32): `syncControlsFromEngine`
+  (`MainWindow.cpp:1369`) and the initial slider position (`:337`) truncate `v * 100`.
+  Positions ±53 and ±59 come back as ±52 / ±58, and `updateSliderValue` then writes the
+  drifted value into the engine. Use `lroundf`. Negative detune in the oscillator dialog has
+  the same problem (`+0.5f` then truncation, `:914`).
+- Status line says `step %d/16` whatever the pattern length (`:2388`).
+- **Stale comments:** `CbStep::reverseStep` (`CBEngine.h:18`) and `stepReverse_` (`:303`)
+  still describe the pre-J EnvMod sign flip; `dupletFactor` (`CBEngine.cpp:592`) says the
+  sub follows the duplet detune, the code does not; the `CbParam` ranges call Tuning,
+  Resonance and EnvMod 0..1.
+- **Accent squelch slider goes down to 0 — decided (Dengo).** The engine and docs already
+  say 0..2 with "0 = no stacking", but the slider reaches only 1..2 (`onSliderScroll`) and
+  `syncControlsFromEngine` clamps below 1, so a loaded value under 1 is shown wrong and
+  overwritten the moment the slider moves. Make the slider 0..200 with position = `sq * 100`,
+  so 100 stays the stock default and the readout says what the engine gets. The file already
+  stores the real value, so no format change and no saved song moves.
+- **Snapshot hardening:** the writer side of the double-buffer relies on the mutex happening
+  to act as a full fence between `commit()`'s `liveIdx_` store and the next writer's
+  `readerIdx_` load. Make both `seq_cst`; it costs nothing on the UI thread.
+
+**Done, all of W**, including the accent squelch slider at 0–200. **Verified** for the
+rounding by the same float32 simulation that found it; the rest is by reading.
+
+---
+
+# Resolved
 
 ## E. Sweep parameter ordering — RESOLVED 2026-09-03, no code change needed
 
@@ -615,7 +964,8 @@ fill one bar, and twelve eighth-triplets over a 4/4 bar is the loping 12/8 shuff
 "groovy 3/4 beat" describes. The ×2/3 sixteenth triplet is the more literal reading and would
 make *24* the one-bar number instead, with 12 giving half a bar of faster rolling triplets.
 **If the ear says otherwise it is one constant** — `tempo * 3.0` becomes `tempo * 6.0` in
-`stepSamples()`, and `analyze_k.py`'s expected periods halve. Recorded here so the change is
+`CBEngine::exactStepSamples()` (called `stepSamples()` until 2026-11-06), and `analyze_k.py`'s
+expected periods halve. Recorded here so the change is
 a two-line one and not an archaeology exercise.
 
 Rejected: making the ratio depend on the pattern length so both 12 and 24 fill exactly one
@@ -696,6 +1046,17 @@ ear or with an actual screen reader.
   and `Alt+S` back from the Accent and Resonance sliders and binding them as accelerators,
   which re-opens the shadowing class that F closed — see the trade-off in `README.md`.
 
+- **A Cutoff sweep once sounded flat within each pattern, jumping at every bar line**
+  (2026-11-06, F5, one sweep spanning several patterns). It could not be reproduced: a
+  headless probe tracing the swept value and per-step brightness, with and without accents,
+  at a 480-frame block, climbs every step, and the bar line is no bigger a change than any
+  note-to-note one. A later run sounded right. **If it happens again, save the `.roq`
+  straight away**, so the exact song can be rendered.
+- **The 2026-11-06 round (L–W), by ear and by screen reader.** Whether the sweep editor
+  reads well with the Hold checkbox and Update button in it; whether `Cutoff (2 sweeps)` is
+  announced usefully on focus or is noise; whether a slide over the bar line now sounds like
+  one note; whether Fuzz still sounds like Fuzz without its offset (it should - only DC
+  moved); and pulling headphones out mid-song to hear the device come back.
 - **Listening — done 2026-09-04.** The resonance boost **works**, and the PWM LFO
   **works**; both are confirmed by ear, not just by numbers. **Reverse step was not what was
   wanted** — rebuilt as a time reversal, see J. The 303 envelope now has a written

@@ -57,10 +57,14 @@ C++17, `/permissive-`, `/utf-8`, Unicode build (`UNICODE`/`_UNICODE`), `WIN32` s
 
 - **Audio out:** WASAPI shared mode on the default Windows endpoint, on its own render
   thread (`src/AudioEngine.cpp`). The device's own sample rate is used; nothing is
-  resampled.
-- **MIDI in:** the first enumerated WinMM input device, note-on / note-off only
-  (`src/MidiInput.cpp`). MIDI notes play the voice independently of the sequencer.
-  External clock sync is not implemented.
+  resampled. **Losing the device is survivable:** unplug the headphones and the render
+  thread reopens whatever the default output now is, retrying until one exists, and the
+  status line announces `Audio device lost` and then `Audio device changed, now <name> at
+  <rate> Hz`. It used to stop rendering for good and keep saying "Playing". It also follows
+  the Windows default: pick another output in Windows and playback moves there, with the
+  same announcement.
+- **No MIDI.** There used to be a MIDI input that stored incoming notes and never played
+  them; it was removed rather than left advertising something it did not do.
 - **Modules:** `modules/` holds the shipped content — 56 `.cb` presets from 2006–2010
   plus a handful of `.roq` songs.
 
@@ -106,7 +110,7 @@ Three consequences worth internalising before touching the UI:
 | Volume, Cutoff, Resonance, EnvMod, Decay, Accent, Tuning | Seven trackbars. Arrows ±1, PgUp/PgDn ±10, Home/End to the rails. **Resonance, EnvMod and Tuning are bipolar (−100…+100)** — negative values give Frank's "inverted" filter character. |
 | Resonance boost | Checkbox under the Resonance slider. Devilfish-style; see below. |
 | Random wildness | Density for the random-pattern generators (0 = sparse, ~0.5 = 2002 defaults, 1 = chaos) |
-| Accent squelch | Residual-stacking amount. `1.0` = Frank's original TB-303 accent buildup, `0` = no stacking, `>1` = progressively squelchier consecutive accents. |
+| Accent squelch | Residual-stacking amount, 0–200 %. `100 %` = Frank's original TB-303 accent buildup, `0` = no stacking, above 100 = progressively squelchier consecutive accents. The slider position is the engine value × 100. |
 | Pattern length | 1–64 steps, per pattern. Sits just before the step list in tab order. See below. |
 | Triplet feel | Per pattern, beside the length. `Ctrl+T`. Makes a step an eighth-note triplet, so 12 steps fill a bar. |
 | Step editor | One step selector + pitch combo (Rest, C0–B4) + slide / accent / reverse-step checkboxes |
@@ -156,7 +160,7 @@ one type combo and three knobs — **gain**, **tone**, **level**.
 | **Rat** | ProCo RAT: a slew-limited op-amp into symmetric hard-clipping diodes, then a passive low-pass | The acid distortion. Roughly three quarters of pre-2000 acid records went through one. |
 | **Screamer** | Tube Screamer: soft clipping in the feedback loop with the bass kept *out* of the clipper | Mid-forward and comparatively polite; thins a bassline out, which is why it cuts. |
 | **Dist+** | MXR Distortion+: hard clipping with no slew limiting | Brighter and rawer than the RAT — that contrast is why both are here. |
-| **Fuzz** | Germanium-ish asymmetric clipping at very high gain | Snarl and even harmonics. The stock clipper is asymmetric too (+0.8 / −0.78), so this is in keeping. |
+| **Fuzz** | Germanium-ish asymmetric clipping at very high gain | Snarl and even harmonics. The stock clipper is asymmetric too (+0.8 / −0.78), so this is in keeping. Silent on rests: it used to leave +0.09 of DC there, which the ring modulator turned into a tone between the notes. |
 
 **Classic is not a model, it is the original code path.** Type 0 calls the untouched
 `dist_dist()` and the three knobs do nothing at all — verified byte-for-byte, not asserted.
@@ -221,6 +225,36 @@ parameter sliders carries its own list of sweeps; a sweep interpolates a slider 
 between a `(pattern, step)` start point and a `(pattern, step)` end point. They can be
 copied and pasted between parameters, saved on their own as `.hape`, and are stored in
 every `.roq`.
+
+How they behave, precisely:
+
+- **Evaluated at each step, in force from the step's first sample.** The value used to be
+  picked up only at the next audio buffer, so every note started with the previous step's
+  value for up to a buffer - longer on a sound card with bigger buffers. On Tuning that was
+  a pitch blip at every note; on Cutoff it landed on the attack. A sweep now renders the
+  same at every buffer size.
+- **Even per step.** A sweep moves the same amount at every step it covers, across
+  patterns of any length. (It used to count each pattern as one unit, so a sweep over a
+  4-step and a 16-step pattern spent half its travel in the short one.)
+- **After the end, the slider - or a hold.** By default the parameter returns to its
+  slider when the sweep ends. Tick **Hold the end value until the next sweep** in the
+  editor and it keeps the end value until the next sweep on that slider starts.
+- **The sliders stay yours.** A sweep never changes what the slider is set to, and saving
+  while a sweep is running saves the slider, not the sweep's momentary value. (It used to
+  save the sweep's value as the slider setting.)
+- **A swept slider says so in its name** - `Cutoff (2 sweeps)` - which is what a screen
+  reader reads on focus, since moving it does nothing a sweep will not override at the
+  next step.
+- **Patterns move, sweeps follow.** Inserting a pattern moves every sweep after it along
+  with its music; deleting one moves them back, clamps an endpoint that was inside the
+  deleted pattern to its nearest neighbour, and removes a sweep that lay wholly inside it.
+  Starting a new song - New random pattern, Import legacy .cb, Start new track - clears
+  the sweeps, since they named the old song's patterns.
+
+**The editor.** Pick a sweep by number, change it and press **Update**; **Add** makes a
+new one. A sweep whose end is before its start is refused with a reason (it could never
+play), as is one that overlaps another on the same slider. **Cancel** really cancels:
+every change made since the dialog opened is undone.
 
 **There is deliberately no general-purpose LFO.** Sweeps cover that ground, and cover it
 with musical structure an LFO does not have.
@@ -308,6 +342,12 @@ Nothing else in the engine knows what a step is — the gate threshold, the note
 reversed envelope is sized to, and the slide rate all derive from one number — so they follow
 a triplet pattern without being told.
 
+**The tempo is exact.** A step is rarely a whole number of samples - at 48 kHz and 140 BPM it
+is 5142.86 - and the sequencer used to drop the fraction, running about 0.02 % fast: 50 ms
+adrift of a DAW after five minutes, and twelve triplet steps 12 samples shorter than a
+16-step bar. It now carries the fraction from step to step, so the bar is exact to a sample
+at any rate. Where the step is already whole (44.1 kHz at 140 BPM) nothing changed at all.
+
 ### The envelope — and why there are four of them
 
 Creakbox inherits the 303's envelope arrangement verbatim, and it does not look like an
@@ -369,7 +409,11 @@ if (remaining < threshold && gateStat_ == 0) gateStat_ = 1;
 
 A plain note therefore sounds for about **47 %** of its step and an accented one for about
 **61 %** — accents are longer as well as louder. On a slide the gate is never closed and
-the note runs unbroken into the next step.
+the note runs unbroken into the next step - **including across the bar line**, into step 1
+of whichever pattern plays next (or of the same pattern, when looping it). That used to
+fail: the filter reset that runs at every pattern start (inherited from 2004) cut the held
+note off with a click and threw the glide away. It is now skipped while a slide carries a
+note across.
 
 **The summary worth carrying:** the loudness contour of a 303 note is *instant on, flat,
 abrupt-but-smooth off*, and every expressive thing is happening in the filter. That is why
@@ -484,6 +528,7 @@ is the **step line**, which grows by appending tokens rather than changing shape
 | 10 | variable-length patterns — a pattern block holds `lastStep + 1` step rows instead of a fixed 16. **Written only when some pattern is not 16 steps.** |
 | 11 | `compThreshold`, `compDepth`, `ringHz`, `ringAmount`. **Written only when one of them differs from its default.** |
 | 12 | per-pattern triplet, as a second token on the pattern's `lastStep` line. **Written only when some pattern uses it**, and readable by older builds either way. |
+| 13 | per-sweep "hold end value", as an eighth token on the sweep line. **Written only when some sweep holds.** An older build reading the line takes the first seven tokens and simply does not hold. |
 
 The v8 step line is `pitch slide accent reverse`. Adding a token rather than changing the
 line's shape is what keeps it readable in both directions: an older three-token parser
@@ -492,7 +537,9 @@ extracts the first three and ignores the rest.
 ### `.hape` — sweeps only (read/write)
 
 A sweep collection on its own, for reusing a set of sweeps across songs. Magic
-`CreakboxHape`. Saved and loaded from inside the sweep editor.
+`CreakboxHape`. Saved and loaded from inside the sweep editor. Stamped 9 - readable by any
+build - unless a sweep in it holds its end value, which stamps 13 and adds the hold token,
+the same "what the file needs" rule `.roq` follows.
 
 ### `.cb` — 2002 module (import only)
 
@@ -507,7 +554,11 @@ legacy .cb**. Treat the format as read-only. Its schema is documented in
 
 **File → Save to WAV** renders the full song order once through, offline, into a 16-bit
 WAV at the audio device's sample rate. It uses a detached engine instance, so the live
-one keeps playing.
+one keeps playing, and gives it the whole song: patterns, every parameter and every sweep.
+The length is the song's real length - pattern lengths and triplet feel included - computed
+with the sequencer's own arithmetic. (Until 2026-11 it rendered no sweeps at all and assumed
+every pattern was 16 straight steps.) It streams to disk, so a long song needs no memory to
+speak of, and a failed write is reported rather than leaving a truncated file.
 
 ---
 
@@ -636,7 +687,7 @@ python tools/check_dsp_ownership.py   after any CBEngine edit
 ```
 
 They exist because everything they catch is **silent** — no error, no warning, no log line.
-The keyboard one covers the six ways a key can quietly do nothing here; the ownership one
+The keyboard one covers the seven ways a key can quietly do nothing here; the ownership one
 checks that non-atomic DSP state is written only on the audio thread, which is the property
 ThreadSanitizer would have verified if MSVC shipped it.
 
