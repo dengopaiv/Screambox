@@ -46,7 +46,10 @@ hdr = io.open(HDR, encoding="utf-8").read()
 # Every private member declared with a trailing underscore that is NOT atomic,
 # NOT a container the writers own, and NOT plainly UI-side.
 members = set()
-for m in re.finditer(r"^\s{4}(?!//)([A-Za-z_][\w:<>, ]*?)\s+([a-zA-Z]\w*_)\s*(?:=|\{|;)",
+# Arrays count too: `float sweptVal_[N]{};` is DSP state exactly like a scalar,
+# and before the sweep overrides arrived nothing non-atomic was an array, so
+# the pattern never had to allow the brackets.
+for m in re.finditer(r"^\s{4}(?!//)([A-Za-z_][\w:<>, ]*?)\s+([a-zA-Z]\w*_)\s*(?:\[[^\]]*\])?\s*(?:=|\{|;)",
                      hdr, re.M):
     typ, name = m.group(1).strip(), m.group(2)
     if "atomic" in typ:
@@ -68,8 +71,9 @@ for i in range(len(bounds) - 1):
     body = src[start:bounds[i + 1][0]]
     for name in members:
         # Assignment, compound assignment, or ++/-- on the member.
+        # An element write (`name[i] = ...`) is a write to the member.
         pat = (r"(?<![\w.>])" + re.escape(name) +
-               r"\s*(?:=(?!=)|\+=|-=|\*=|/=|\+\+|--)|(?:\+\+|--)\s*" + re.escape(name))
+               r"\s*(?:\[[^\]]*\])?\s*(?:=(?!=)|\+=|-=|\*=|/=|\+\+|--)|(?:\+\+|--)\s*" + re.escape(name))
         if re.search(pat, body):
             writes.setdefault(name, set()).add(fname)
 

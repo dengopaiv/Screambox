@@ -58,14 +58,48 @@ constexpr const char* kHapeMagic = "CreakboxHape";
 //     append in the same sense the per-step reverse column was: tolerant in
 //     both directions, and costing no compatibility at all - unlike v10, whose
 //     row count is positional. Stamped only when some pattern uses it.
-constexpr int kMaxVersion = 12;
+// v13: per-sweep "hold end value", as an EIGHTH TOKEN on the sweep line. The
+//     sweep line is read with `istringstream >>` for seven fields and the rest
+//     ignored, so an older build reads a v13 sweep correctly and simply does not
+//     hold - the step-line trick again. The reader takes the token whenever it
+//     is there, whatever the header says. Stamped only when some sweep holds;
+//     the writer emits the token only at v13, so lower stamps keep their bytes.
+constexpr int kMaxVersion = 13;
 
 // .hape shares the version counter with .roq for historical reasons, but its
 // schema — a sweep count and one line per sweep — has never changed. Pin it
 // rather than letting it ride the .roq bumps: stamping a sweep export with a
 // number no older build accepts would break compatibility to describe a change
 // that did not happen. Bump this only if a .hape line ever gains a field.
-constexpr int kHapeVersion = 9;
+//
+// It did, in v13 (the hold token) - and the same "what the file needs" rule as
+// .roq applies: a .hape with no held sweep is still stamped 9 and still has the
+// seven-token lines every older build reads; only one carrying a held sweep is
+// stamped 13 and gets the eighth token.
+constexpr int kHapeVersion     = 9;
+constexpr int kHapeHoldVersion = 13;
+
+bool anyHold(const std::vector<RoqSweep>& sweeps) {
+    for (const auto& s : sweeps) if (s.hold) return true;
+    return false;
+}
+
+// One sweep line, the seven fields every version has plus the v13 hold token.
+void readSweepLine(const std::string& line, RoqSweep& sw) {
+    std::istringstream ss(line);
+    ss >> sw.sliderIdx >> sw.startPat >> sw.startStep >> sw.startVal
+       >> sw.endPat   >> sw.endStep   >> sw.endVal;
+    int hold = 0;
+    if (ss >> hold) sw.hold = hold != 0;
+}
+
+void writeSweepLine(std::ostream& out, const RoqSweep& sw, bool withHold) {
+    out << sw.sliderIdx << " "
+        << sw.startPat  << " " << sw.startStep << " " << sw.startVal << " "
+        << sw.endPat    << " " << sw.endStep   << " " << sw.endVal;
+    if (withHold) out << " " << (sw.hold ? 1 : 0);
+    out << "\n";
+}
 
 bool readLine(std::ifstream& in, std::string& out) {
     if (!std::getline(in, out)) return false;
@@ -210,10 +244,8 @@ std::optional<RoqSong> loadRoq(const std::string& path, std::string& error) {
     for (int i = 0; i < sweepCount; ++i) {
         std::string line;
         if (!readLine(in, line)) { error = "truncated sweep data"; return std::nullopt; }
-        std::istringstream ss(line);
         RoqSweep sw;
-        ss >> sw.sliderIdx >> sw.startPat >> sw.startStep >> sw.startVal
-           >> sw.endPat   >> sw.endStep   >> sw.endVal;
+        readSweepLine(line, sw);
         song.sweeps.push_back(sw);
     }
     return song;
@@ -226,8 +258,10 @@ std::optional<RoqSong> loadRoq(const std::string& path, std::string& error) {
 // a reader cannot absorb positionally. Keeping this a function of the *content*
 // is what lets an ordinary 16-step song stay loadable by pre-v10 builds.
 static int neededVersion(const RoqSong& song) {
-    // v12: any pattern in triplet mode. Checked first because 12 implies
-    // everything below it.
+    // v13: any sweep that holds its end value. Checked first because 13
+    // implies everything below it.
+    if (anyHold(song.sweeps)) return 13;
+    // v12: any pattern in triplet mode.
     for (const auto& p : song.patterns) {
         if (p.triplet) return 12;
     }
@@ -318,11 +352,9 @@ bool saveRoq(const std::string& path, const RoqSong& song, std::string& error) {
     }
 
     out << song.sweeps.size() << "\n";
-    for (const auto& sw : song.sweeps) {
-        out << sw.sliderIdx << " "
-            << sw.startPat  << " " << sw.startStep << " " << sw.startVal << " "
-            << sw.endPat    << " " << sw.endStep   << " " << sw.endVal   << "\n";
-    }
+    // The hold token only at v13, mirroring neededVersion(): a file stamped
+    // lower keeps exactly the seven-token lines it always had.
+    for (const auto& sw : song.sweeps) writeSweepLine(out, sw, version >= 13);
 
     if (!out) { error = "write failed"; return false; }
     return true;
@@ -350,10 +382,8 @@ std::optional<std::vector<RoqSweep>> loadHape(const std::string& path, std::stri
     for (int i = 0; i < sweepCount; ++i) {
         std::string line;
         if (!readLine(in, line)) { error = "truncated sweep data"; return std::nullopt; }
-        std::istringstream ss(line);
         RoqSweep sw;
-        ss >> sw.sliderIdx >> sw.startPat >> sw.startStep >> sw.startVal
-           >> sw.endPat   >> sw.endStep   >> sw.endVal;
+        readSweepLine(line, sw);
         out.push_back(sw);
     }
     return out;
@@ -363,13 +393,10 @@ bool saveHape(const std::string& path, const std::vector<RoqSweep>& sweeps, std:
     std::ofstream out(path);
     if (!out) { error = "cannot create file"; return false; }
     out << kHapeMagic << "\n";
-    out << kHapeVersion << "\n";
+    const bool hold = anyHold(sweeps);
+    out << (hold ? kHapeHoldVersion : kHapeVersion) << "\n";
     out << sweeps.size() << "\n";
-    for (const auto& sw : sweeps) {
-        out << sw.sliderIdx << " "
-            << sw.startPat  << " " << sw.startStep << " " << sw.startVal << " "
-            << sw.endPat    << " " << sw.endStep   << " " << sw.endVal   << "\n";
-    }
+    for (const auto& sw : sweeps) writeSweepLine(out, sw, hold);
     if (!out) { error = "write failed"; return false; }
     return true;
 }

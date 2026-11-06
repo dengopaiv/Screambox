@@ -134,7 +134,7 @@ END
 // (IDD_STEP_EDIT dialog removed — replaced by inline per-step controls
 //  in the main window.)
 
-IDD_SWEEP_EDIT DIALOGEX 0, 0, 360, 260
+IDD_SWEEP_EDIT DIALOGEX 0, 0, 360, 282
 STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Sweep editor"
 FONT 9, "Segoe UI", 400, 0, 0x0
@@ -151,7 +151,9 @@ BEGIN
     CONTROL         "", IDC_SWEEP_START_VALUE, "msctls_trackbar32",
                     TBS_HORZ | TBS_AUTOTICKS | WS_TABSTOP, 80, 90, 180, 18
     LTEXT           "+0%",               IDC_SWEEP_START_VALUE_LBL, 264, 92, 80, 14
-    LTEXT           "End patter&n:",     IDC_STATIC, 8, 116, 70, 14
+    // En&d, not patter&n: N belongs to "Sweep &number", and a shared mnemonic
+    // cycles focus between the two instead of activating either.
+    LTEXT           "En&d pattern:",     IDC_STATIC, 8, 116, 70, 14
     COMBOBOX        IDC_SWEEP_END_PATTERN, 80, 114, 60, 160, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     LTEXT           "End st&ep:",        IDC_STATIC, 150, 116, 50, 14
     COMBOBOX        IDC_SWEEP_END_STEP,  200, 114, 60, 160, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
@@ -159,16 +161,21 @@ BEGIN
     CONTROL         "", IDC_SWEEP_END_VALUE, "msctls_trackbar32",
                     TBS_HORZ | TBS_AUTOTICKS | WS_TABSTOP, 80, 138, 180, 18
     LTEXT           "+0%",               IDC_SWEEP_END_VALUE_LBL, 264, 140, 80, 14
+    // Off = snap back to the slider when the sweep ends (the original).
+    AUTOCHECKBOX    "&Hold the end value until the next sweep", IDC_SWEEP_HOLD, 80, 160, 270, 12, WS_TABSTOP
 
-    PUSHBUTTON      "&Add",              IDC_SWEEP_ADD,    8,   170, 60, 18, WS_TABSTOP
-    PUSHBUTTON      "&Remove",           IDC_SWEEP_REMOVE, 72,  170, 60, 18, WS_TABSTOP
-    PUSHBUTTON      "&Copy",             IDC_SWEEP_COPY,   136, 170, 60, 18, WS_TABSTOP
-    PUSHBUTTON      "Pas&te",            IDC_SWEEP_PASTE,  200, 170, 60, 18, WS_TABSTOP
-    PUSHBUTTON      "&Save to file...",  IDC_SWEEP_SAVE,   8,   192, 90, 18, WS_TABSTOP
-    PUSHBUTTON      "L&oad from file...", IDC_SWEEP_LOAD,  102, 192, 90, 18, WS_TABSTOP
-    LTEXT           "",                  IDC_SWEEP_STATUS, 8, 216, 340, 14
-    DEFPUSHBUTTON   "OK",                IDOK,             240, 238, 50, 16, WS_TABSTOP
-    PUSHBUTTON      "Cancel",            IDCANCEL,         294, 238, 50, 16, WS_TABSTOP
+    PUSHBUTTON      "&Add",              IDC_SWEEP_ADD,    8,   180, 60, 18, WS_TABSTOP
+    PUSHBUTTON      "&Update",           IDC_SWEEP_UPDATE, 72,  180, 60, 18, WS_TABSTOP
+    PUSHBUTTON      "&Remove",           IDC_SWEEP_REMOVE, 136, 180, 60, 18, WS_TABSTOP
+    PUSHBUTTON      "&Copy",             IDC_SWEEP_COPY,   200, 180, 60, 18, WS_TABSTOP
+    // Pa&ste, not Pas&te: T belongs to "Start s&tep". S was free once "Save
+    // to file" moved to F.
+    PUSHBUTTON      "Pa&ste",            IDC_SWEEP_PASTE,  264, 180, 60, 18, WS_TABSTOP
+    PUSHBUTTON      "Save to &file...",  IDC_SWEEP_SAVE,   8,   202, 90, 18, WS_TABSTOP
+    PUSHBUTTON      "L&oad from file...", IDC_SWEEP_LOAD,  102, 202, 90, 18, WS_TABSTOP
+    LTEXT           "",                  IDC_SWEEP_STATUS, 8, 226, 344, 28
+    DEFPUSHBUTTON   "OK",                IDOK,             240, 260, 50, 16, WS_TABSTOP
+    PUSHBUTTON      "Cancel",            IDCANCEL,         294, 260, 50, 16, WS_TABSTOP
 END
 
 IDD_OSCILLATOR DIALOGEX 0, 0, 300, 314

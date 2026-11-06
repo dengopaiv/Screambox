@@ -163,6 +163,8 @@
 #define IDC_SWEEP_PASTE             713
 #define IDC_SWEEP_SAVE              714
 #define IDC_SWEEP_LOAD              715
+#define IDC_SWEEP_UPDATE            716
+#define IDC_SWEEP_HOLD              717
 #define IDC_SWEEP_COUNT_LABEL       720
 #define IDC_SWEEP_STATUS            721
 #define IDC_SWEEP_START_VALUE_LBL   722

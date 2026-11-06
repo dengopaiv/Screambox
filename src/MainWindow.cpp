@@ -245,21 +245,26 @@ void MainWindow::buildLayout() {
 
     // Accent squelch: scales the residual-stacking amount for the TB-303
     // accent buildup. 100% = Frank's original behavior; 0 = no buildup;
-    // >100% amplifies the squelch on successive accents.
+    // >100% amplifies the squelch on successive accents. The position IS the
+    // engine value times 100, so what the label says is what the engine gets.
     hAccentSquelchLabel_ = createLabel(hwnd_, hInst_, IDC_ACCENT_SQUELCH_LABEL,
         400, y + 2, 110, 16, L"Accent s&quelch:");
     hAccentSquelch_ = CreateWindowExW(0, TRACKBAR_CLASSW, L"Accent squelch",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_HORZ | TBS_AUTOTICKS,
         400, y + 16, 130, 22,
         hwnd_, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_ACCENT_SQUELCH)), hInst_, nullptr);
-    // 0 = Frank's original TB-303 accent (sq=1.0). 100 = double squelch
-    // (sq=2.0) for progressively harder buildup on consecutive accents.
-    SendMessageW(hAccentSquelch_, TBM_SETRANGE, TRUE, MAKELPARAM(0, 100));
+    // 0..200 = sq 0.0..2.0. It used to be 0..100 mapped onto 1.0..2.0, so the
+    // half of the range below Frank's original - down to no stacking at all,
+    // which the engine has always supported - was out of reach, and a loaded
+    // song with sq under 1 was shown wrong and overwritten on the first touch.
+    SendMessageW(hAccentSquelch_, TBM_SETRANGE, TRUE, MAKELPARAM(0, 200));
     SendMessageW(hAccentSquelch_, TBM_SETLINESIZE, 0, 1);
     SendMessageW(hAccentSquelch_, TBM_SETPAGESIZE, 0, 10);
-    SendMessageW(hAccentSquelch_, TBM_SETPOS, TRUE, 0);
+    const int sqPos = static_cast<int>(std::lround(engine_.getParam(CbParam::AccentSquelch) * 100.0f));
+    SendMessageW(hAccentSquelch_, TBM_SETPOS, TRUE, sqPos);
+    wchar_t sqText[16]; swprintf(sqText, 16, L"%d%%", sqPos);
     hAccentSquelchValue_ = createLabel(hwnd_, hInst_, IDC_ACCENT_SQUELCH_VALUE,
-        535, y + 18, 50, 16, L"0%");
+        535, y + 18, 50, 16, sqText);
 
     // Wildness slider: drives density (rest / slide / accent probability)
     // for all random-pattern and per-step randomize operations. Live slider,
@@ -320,6 +325,8 @@ void MainWindow::buildLayout() {
     for (int i = 0; i < 7; ++i) {
         const int x = 10 + i * (sliderW + gap);
         hSliderLabels_[i] = createLabel(hwnd_, hInst_, IDC_STATIC, x, y, sliderW, 16, kParamNames[i]);
+        sliderLabelBase_[i] = kParamNames[i];
+        sliderPlainBase_[i] = kParamPlain[i];
         hSliders_[i] = CreateWindowExW(0, TRACKBAR_CLASSW, kParamPlain[i],
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_HORZ | TBS_AUTOTICKS | TBS_NOTIFYBEFOREMOVE,
             x, y + 16, sliderW, sliderH,
@@ -333,7 +340,9 @@ void MainWindow::buildLayout() {
         // Initial position: engine stores 0..1 for unipolar params. For
         // bipolar params, the engine stores the bipolar value directly
         // (range -1..+1, centre 0 = neutral).
-        int initPos = static_cast<int>(engine_.getParam(kParamIds[i]) * 100.0f);
+        // Rounded, not truncated: 0.53f * 100 is 52.99999, and truncation
+        // turned a saved 53 into 52 (and 59 into 58) on every load.
+        int initPos = static_cast<int>(std::lround(engine_.getParam(kParamIds[i]) * 100.0f));
         if (initPos < rangeMin) initPos = rangeMin;
         if (initPos > rangeMax) initPos = rangeMax;
         SendMessageW(hSliders_[i], TBM_SETPOS, TRUE, static_cast<LPARAM>(initPos));
@@ -480,12 +489,13 @@ void MainWindow::buildLayout() {
     hStatus_ = createLabel(hwnd_, hInst_, IDC_STATUS_LABEL, 10, y, 720, 20, L"Ready.");
     // Show the audio sample rate so the user knows what WASAPI handed us.
     wchar_t initMsg[128];
-    swprintf(initMsg, 128, L"Ready. Audio: %.0f Hz, WASAPI shared.  Sweeps off.",
+    swprintf(initMsg, 128, L"Ready. Audio: %.0f Hz, WASAPI shared.",
              audio_.sampleRate());
     SetWindowTextW(hStatus_, initMsg);
     audioGen_ = audio_.deviceGeneration();   // the device we started on is not news
 
     refreshPatternLabel();
+    refreshSweptLabels();
 }
 
 // -------------------- Sweep editor --------------------
@@ -519,6 +529,22 @@ namespace { bool sweepsOverlap(const MainWindow::Sweep& a, const MainWindow::Swe
     // Intervals are inclusive. They overlap if neither ends before the other starts.
     return !(a1 < b0 || b1 < a0);
 } }
+
+// A sweep whose end comes before its start passes the overlap test above (it
+// orders the two ends itself) and then never plays at all: the engine applies a
+// sweep only while start <= position <= end. Refused with a reason instead.
+static bool sweepIsBackwards(const MainWindow::Sweep& s) {
+    return s.endPattern * 64 + s.endStep < s.startPattern * 64 + s.startStep;
+}
+
+// Sets a dialog label and says so to assistive technology - the dialog
+// equivalent of announceValue(). A bare SetWindowTextW leaves a screen reader
+// holding the old text.
+static void setDlgLabel(HWND dlg, int id, const wchar_t* text) {
+    HWND h = GetDlgItem(dlg, id);
+    SetWindowTextW(h, text);
+    NotifyWinEvent(EVENT_OBJECT_NAMECHANGE, h, OBJID_CLIENT, CHILDID_SELF);
+}
 
 INT_PTR CALLBACK MainWindow::sweepEditorProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
     auto* self = reinterpret_cast<MainWindow*>(GetWindowLongPtrW(dlg, GWLP_USERDATA));
@@ -594,32 +620,51 @@ static void populateSweepDialog(HWND dlg, const std::vector<int>& patLens,
     fillPatterns(IDC_SWEEP_START_PATTERN);
     fillPatterns(IDC_SWEEP_END_PATTERN);
 
-    auto lenOf = [&](int p) { return (p >= 0 && p < numPatterns) ? patLens[p] : 16; };
-    SendMessageW(GetDlgItem(dlg, IDC_SWEEP_START_PATTERN), CB_SETCURSEL, sw.startPattern, 0);
-    SendMessageW(GetDlgItem(dlg, IDC_SWEEP_END_PATTERN),   CB_SETCURSEL, sw.endPattern,   0);
+    // A sweep can name a pattern this song does not have - from a .hape made
+    // for another song, or one whose patterns were deleted. A combo given an
+    // out-of-range index shows nothing and reads back CB_ERR, which Add used
+    // to store as pattern -1. Show the nearest real pattern and say so.
+    auto clampPat = [&](int p) { return p < 0 ? 0 : (p >= numPatterns ? numPatterns - 1 : p); };
+    const int sp = clampPat(sw.startPattern), ep = clampPat(sw.endPattern);
+    SendMessageW(GetDlgItem(dlg, IDC_SWEEP_START_PATTERN), CB_SETCURSEL, sp, 0);
+    SendMessageW(GetDlgItem(dlg, IDC_SWEEP_END_PATTERN),   CB_SETCURSEL, ep, 0);
     // After the pattern combos, so each step list is sized to its own pattern.
-    fillStepCombo(dlg, IDC_SWEEP_START_STEP, lenOf(sw.startPattern), sw.startStep);
-    fillStepCombo(dlg, IDC_SWEEP_END_STEP,   lenOf(sw.endPattern),   sw.endStep);
+    fillStepCombo(dlg, IDC_SWEEP_START_STEP, patLens[sp], sw.startStep);
+    fillStepCombo(dlg, IDC_SWEEP_END_STEP,   patLens[ep], sw.endStep);
     SendMessageW(GetDlgItem(dlg, IDC_SWEEP_START_VALUE), TBM_SETPOS, TRUE, sw.startValue);
     SendMessageW(GetDlgItem(dlg, IDC_SWEEP_END_VALUE),   TBM_SETPOS, TRUE, sw.endValue);
+    CheckDlgButton(dlg, IDC_SWEEP_HOLD, sw.hold ? BST_CHECKED : BST_UNCHECKED);
     wchar_t sv[16], ev[16];
     sweepValueLabelFor(sw.startValue, sv, 16);
     sweepValueLabelFor(sw.endValue,   ev, 16);
-    SetWindowTextW(GetDlgItem(dlg, IDC_SWEEP_START_VALUE_LBL), sv);
-    SetWindowTextW(GetDlgItem(dlg, IDC_SWEEP_END_VALUE_LBL),   ev);
+    setDlgLabel(dlg, IDC_SWEEP_START_VALUE_LBL, sv);
+    setDlgLabel(dlg, IDC_SWEEP_END_VALUE_LBL,   ev);
 
     wchar_t cnt[32]; swprintf(cnt, 32, L"Sweeps: %d", (int)all.size());
-    SetWindowTextW(GetDlgItem(dlg, IDC_SWEEP_COUNT_LABEL), cnt);
+    setDlgLabel(dlg, IDC_SWEEP_COUNT_LABEL, cnt);
+    if (sp != sw.startPattern || ep != sw.endPattern) {
+        wchar_t m[160];
+        swprintf(m, 160, L"This sweep names pattern %d, which this song does not have. Showing pattern %d.",
+                 (sp != sw.startPattern ? sw.startPattern : sw.endPattern) + 1,
+                 (sp != sw.startPattern ? sp : ep) + 1);
+        setDlgLabel(dlg, IDC_SWEEP_STATUS, m);
+    }
 }
 
 static MainWindow::Sweep readSweepFromDialog(HWND dlg) {
+    // CB_ERR (-1) must never become a pattern or step number.
+    auto sel = [&](int id) {
+        const int v = (int)SendMessageW(GetDlgItem(dlg, id), CB_GETCURSEL, 0, 0);
+        return v < 0 ? 0 : v;
+    };
     MainWindow::Sweep sw;
-    sw.startPattern = (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_START_PATTERN), CB_GETCURSEL, 0, 0);
-    sw.startStep    = (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_START_STEP),    CB_GETCURSEL, 0, 0);
-    sw.endPattern   = (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_END_PATTERN),   CB_GETCURSEL, 0, 0);
-    sw.endStep      = (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_END_STEP),      CB_GETCURSEL, 0, 0);
+    sw.startPattern = sel(IDC_SWEEP_START_PATTERN);
+    sw.startStep    = sel(IDC_SWEEP_START_STEP);
+    sw.endPattern   = sel(IDC_SWEEP_END_PATTERN);
+    sw.endStep      = sel(IDC_SWEEP_END_STEP);
     sw.startValue   = (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_START_VALUE), TBM_GETPOS, 0, 0);
     sw.endValue     = (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_END_VALUE),   TBM_GETPOS, 0, 0);
+    sw.hold         = IsDlgButtonChecked(dlg, IDC_SWEEP_HOLD) == BST_CHECKED;
     return sw;
 }
 
@@ -631,6 +676,13 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
             SetWindowTextW(GetDlgItem(dlg, IDC_SWEEP_PARAM_LABEL), hdr);
 
             configureSweepValueTrackbars(dlg, editingSweepParam_);
+            // Enter on a checkbox would otherwise press the dialog's default
+            // button - OK - and close the editor. Same subclass as the main
+            // window's checkboxes, so Enter toggles it like Space does.
+            makeCheckboxEnterActivatable(GetDlgItem(dlg, IDC_SWEEP_HOLD));
+            // Cancel restores this. Add, Update, Remove and Load all edit the
+            // list in place, so without a snapshot Cancel did exactly what OK did.
+            sweepSnapshot_ = paramSweeps_[editingSweepParam_];
 
             const auto& list = paramSweeps_[editingSweepParam_];
             Sweep current = list.empty() ? Sweep{} : list[editingSweepIndex_];
@@ -647,8 +699,8 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
             wchar_t s[16], e[16];
             sweepValueLabelFor(startPos, s, 16);
             sweepValueLabelFor(endPos,   e, 16);
-            SetWindowTextW(GetDlgItem(dlg, IDC_SWEEP_START_VALUE_LBL), s);
-            SetWindowTextW(GetDlgItem(dlg, IDC_SWEEP_END_VALUE_LBL),   e);
+            setDlgLabel(dlg, IDC_SWEEP_START_VALUE_LBL, s);
+            setDlgLabel(dlg, IDC_SWEEP_END_VALUE_LBL,   e);
             HWND which = reinterpret_cast<HWND>(lp);  // which trackbar moved
             if (which) {
                 NotifyWinEvent(EVENT_OBJECT_VALUECHANGE, which, OBJID_CLIENT, CHILDID_SELF);
@@ -684,6 +736,10 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
             }
             if (id == IDC_SWEEP_ADD) {
                 Sweep sw = readSweepFromDialog(dlg);
+                if (sweepIsBackwards(sw)) {
+                    setStatus(L"The end is before the start, so this sweep would never play. Adjust the ranges.");
+                    return TRUE;
+                }
                 for (size_t k = 0; k < list.size(); ++k) {
                     if (sweepsOverlap(list[k], sw)) {
                         wchar_t m[128];
@@ -697,6 +753,36 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                 populateSweepDialog(dlg, patternLengths(),
                                     list.back(), list, editingSweepIndex_);
                 setStatus(L"Sweep added.");
+                return TRUE;
+            }
+            if (id == IDC_SWEEP_UPDATE) {
+                // Replace the sweep being viewed. Before this existed, changing
+                // a sweep meant noting its values, removing it, retyping them
+                // and adding it again - Add refused, because the new version
+                // overlapped the very sweep it was meant to replace.
+                if (list.empty() || editingSweepIndex_ < 0 || editingSweepIndex_ >= (int)list.size()) {
+                    setStatus(L"No sweep to update. Press Add to create one.");
+                    return TRUE;
+                }
+                Sweep sw = readSweepFromDialog(dlg);
+                if (sweepIsBackwards(sw)) {
+                    setStatus(L"The end is before the start, so this sweep would never play. Adjust the ranges.");
+                    return TRUE;
+                }
+                for (size_t k = 0; k < list.size(); ++k) {
+                    if ((int)k == editingSweepIndex_) continue;
+                    if (sweepsOverlap(list[k], sw)) {
+                        wchar_t m[128];
+                        swprintf(m, 128, L"Overlap with sweep %zu. Adjust ranges.", k + 1);
+                        setStatus(m);
+                        return TRUE;
+                    }
+                }
+                list[editingSweepIndex_] = sw;
+                populateSweepDialog(dlg, patternLengths(),
+                                    list[editingSweepIndex_], list, editingSweepIndex_);
+                wchar_t m[64]; swprintf(m, 64, L"Sweep %d updated.", editingSweepIndex_ + 1);
+                setStatus(m);
                 return TRUE;
             }
             if (id == IDC_SWEEP_REMOVE) {
@@ -741,6 +827,7 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                     sw.sliderIdx = editingSweepParam_;
                     sw.startPat = s.startPattern; sw.startStep = s.startStep; sw.startVal = s.startValue;
                     sw.endPat   = s.endPattern;   sw.endStep   = s.endStep;   sw.endVal   = s.endValue;
+                    sw.hold     = s.hold;
                     out.push_back(sw);
                 }
                 std::string err;
@@ -781,6 +868,7 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                     Sweep ui;
                     ui.startPattern = sw.startPat; ui.startStep = sw.startStep; ui.startValue = sw.startVal;
                     ui.endPattern   = sw.endPat;   ui.endStep   = sw.endStep;   ui.endValue   = sw.endVal;
+                    ui.hold         = sw.hold;
                     list.push_back(ui);
                 }
                 editingSweepIndex_ = 0;
@@ -797,7 +885,12 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                 setStatus(m);
                 return TRUE;
             }
-            if (id == IDOK || id == IDCANCEL) {
+            if (id == IDCANCEL) {
+                list = sweepSnapshot_;   // openSweepEditor() pushes whichever list remains
+                EndDialog(dlg, id);
+                return TRUE;
+            }
+            if (id == IDOK) {
                 EndDialog(dlg, id);
                 return TRUE;
             }
@@ -805,6 +898,52 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
         }
     }
     return FALSE;
+}
+
+// -------------------- Sweep plumbing --------------------
+
+void MainWindow::pushSweeps(CBEngine& target, int sliderIdx) const {
+    if (sliderIdx < 0 || sliderIdx >= 7) return;
+    std::vector<CBEngine::ParamSweep> es;
+    es.reserve(paramSweeps_[sliderIdx].size());
+    for (const auto& s : paramSweeps_[sliderIdx]) {
+        CBEngine::ParamSweep e;
+        e.startPat = s.startPattern; e.startStep = s.startStep; e.startVal = s.startValue;
+        e.endPat   = s.endPattern;   e.endStep   = s.endStep;   e.endVal   = s.endValue;
+        e.hold     = s.hold;
+        es.push_back(e);
+    }
+    target.setParamSweeps(sliderIdx, es);
+}
+
+void MainWindow::pushAllSweeps(CBEngine& target) const {
+    for (int k = 0; k < 7; ++k) pushSweeps(target, k);
+}
+
+size_t MainWindow::clearAllSweeps() {
+    size_t n = 0;
+    for (auto& list : paramSweeps_) { n += list.size(); list.clear(); }
+    pushAllSweeps(engine_);
+    refreshSweptLabels();
+    return n;
+}
+
+void MainWindow::refreshSweptLabels() {
+    for (int i = 0; i < 7; ++i) {
+        if (!hSliders_[i] || !hSliderLabels_[i]) continue;
+        const size_t n = paramSweeps_[i].size();
+        wchar_t suffix[32] = L"";
+        if (n) swprintf(suffix, 32, L" (%zu sweep%s)", n, n == 1 ? L"" : L"s");
+        const std::wstring label = sliderLabelBase_[i] + suffix;
+        const std::wstring plain = sliderPlainBase_[i] + suffix;
+        // Both: the STATIC is what sighted users read and what the dialog
+        // manager pairs with the trackbar, and the trackbar's own text is the
+        // name some screen readers take first.
+        SetWindowTextW(hSliderLabels_[i], label.c_str());
+        NotifyWinEvent(EVENT_OBJECT_NAMECHANGE, hSliderLabels_[i], OBJID_CLIENT, CHILDID_SELF);
+        SetWindowTextW(hSliders_[i], plain.c_str());
+        NotifyWinEvent(EVENT_OBJECT_NAMECHANGE, hSliders_[i], OBJID_CLIENT, CHILDID_SELF);
+    }
 }
 
 // -------------------- Oscillator dialog --------------------
@@ -910,8 +1049,10 @@ INT_PTR MainWindow::oscDialogHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
                 static_cast<int>(engine_.getParam(CbParam::NoiseLevel) * 100.0f + 0.5f));
             setTrackAndLabel(dlg, IDC_OSC_DUP_PWM, IDC_OSC_DUP_PWM_VALUE,
                 static_cast<int>(engine_.getParam(CbParam::DupletPWM) * 100.0f + 0.5f));
+            // lround: the +0.5-and-truncate the other sliders use is wrong for
+            // negative values, and detune is the one that has them.
             setDetuneTrack(dlg,
-                static_cast<int>(engine_.getParam(CbParam::DupletDetune) * 1200.0f + 0.5f));
+                static_cast<int>(std::lround(engine_.getParam(CbParam::DupletDetune) * 1200.0f)));
             setTrackAndLabel(dlg, IDC_OSC_DUP_LEVEL, IDC_OSC_DUP_LEVEL_VALUE,
                 static_cast<int>(engine_.getParam(CbParam::DupletLevel) * 100.0f + 0.5f));
             HWND wv = GetDlgItem(dlg, IDC_OSC_DUP_WAVEFORM);
@@ -1239,15 +1380,9 @@ void MainWindow::openSweepEditor(int sliderIdx) {
                     reinterpret_cast<LPARAM>(this));
 
     // Push the UI's sweep list into the engine so it modulates params live.
-    std::vector<CBEngine::ParamSweep> engineSweeps;
-    engineSweeps.reserve(paramSweeps_[sliderIdx].size());
-    for (const auto& s : paramSweeps_[sliderIdx]) {
-        CBEngine::ParamSweep es;
-        es.startPat = s.startPattern; es.startStep = s.startStep; es.startVal = s.startValue;
-        es.endPat   = s.endPattern;   es.endStep   = s.endStep;   es.endVal   = s.endValue;
-        engineSweeps.push_back(es);
-    }
-    engine_.setParamSweeps(sliderIdx, engineSweeps);
+    // After Cancel this is the snapshot taken when the dialog opened.
+    pushSweeps(engine_, sliderIdx);
+    refreshSweptLabels();
 
     char sb[128];
     _snprintf_s(sb, _TRUNCATE, "Sweep editor closed for %s. %zu sweep(s) stored.",
@@ -1366,7 +1501,7 @@ void MainWindow::syncControlsFromEngine() {
     };
     for (int i = 0; i < 7; ++i) {
         if (!hSliders_[i]) continue;
-        int pos = static_cast<int>(engine_.getParam(kIds[i]) * 100.0f);
+        int pos = static_cast<int>(std::lround(engine_.getParam(kIds[i]) * 100.0f));
         SendMessageW(hSliders_[i], TBM_SETPOS, TRUE, static_cast<LPARAM>(pos));
         updateSliderValue(i);
     }
@@ -1379,11 +1514,11 @@ void MainWindow::syncControlsFromEngine() {
                      engine_.getParam(CbParam::ResoBoost) > 0.5f ? BST_CHECKED : BST_UNCHECKED, 0);
     }
     if (hAccentSquelch_ && hAccentSquelchValue_) {
-        // Inverse of the slider map: sq 1.0..2.0 → slider 0..100.
+        // Inverse of the slider map: sq 0.0..2.0 → slider 0..200.
         float sq = engine_.getParam(CbParam::AccentSquelch);
-        if (sq < 1.0f) sq = 1.0f;
+        if (sq < 0.0f) sq = 0.0f;
         if (sq > 2.0f) sq = 2.0f;
-        int pos = static_cast<int>((sq - 1.0f) * 100.0f + 0.5f);
+        int pos = static_cast<int>(std::lround(sq * 100.0f));
         SendMessageW(hAccentSquelch_, TBM_SETPOS, TRUE, pos);
         wchar_t buf[16]; swprintf(buf, 16, L"%d%%", pos);
         SetWindowTextW(hAccentSquelchValue_, buf);
@@ -1418,15 +1553,30 @@ void MainWindow::gotoNextPattern() {
 }
 
 void MainWindow::addPatternAfterCurrent() {
-    // Engine's insertPatternAfterCurrent uses its own patternIdx_ — align it
-    // to the editor's selection so the new slot lands where the user expects.
-    engine_.selectPattern(editingIdx_);
-    int newIdx = engine_.insertPatternAfterCurrent();
+    // Inserted after the EDITED pattern, without touching playback: this used
+    // to select the edited pattern as the playback position first, so adding a
+    // pattern while the song played threw the playhead onto the new empty one.
+    const int newIdx = engine_.insertPatternAfter(editingIdx_);
+    // Sweeps address patterns by index, so every endpoint at or after the new
+    // slot moves up one - otherwise each sweep after it silently lands one
+    // pattern early. A sweep spanning the insertion point stretches over the
+    // new pattern, which is what "insert a bar in the middle" means.
+    int moved = 0;
+    for (auto& list : paramSweeps_) {
+        for (auto& s : list) {
+            bool m = false;
+            if (s.startPattern >= newIdx) { ++s.startPattern; m = true; }
+            if (s.endPattern   >= newIdx) { ++s.endPattern;   m = true; }
+            moved += m;
+        }
+    }
+    if (moved) pushAllSweeps(engine_);
     editingIdx_ = newIdx;
     populateStepList();
     refreshPatternLabel();
-    char sb[96]; _snprintf_s(sb, _TRUNCATE, "New empty pattern inserted at position %d of %d.",
-                              newIdx + 1, engine_.patternCount());
+    char sb[160]; _snprintf_s(sb, _TRUNCATE, "New empty pattern inserted at position %d of %d.%s",
+                              newIdx + 1, engine_.patternCount(),
+                              moved ? " Sweeps after it moved with their patterns." : "");
     announceValue(hStatus_, sb);
 }
 
@@ -1546,12 +1696,15 @@ void MainWindow::newRandomPattern() {
     const float wild = readWildness();
     std::vector<CbPattern> ps{ CBEngine::makeRandomPattern(lastRandomFlavor_, wild) };
     engine_.setPatterns(ps);
+    // A new song, so the old song's sweeps go too - they named patterns this
+    // one does not have.
+    const size_t cleared = clearAllSweeps();
     editingIdx_ = 0;
     populateStepList();
     refreshPatternLabel();
-    char sb[128];
-    _snprintf_s(sb, _TRUNCATE, "New random pattern created (%s).",
-                flavorName(lastRandomFlavor_));
+    char sb[160];
+    _snprintf_s(sb, _TRUNCATE, "New random pattern created (%s).%s",
+                flavorName(lastRandomFlavor_), cleared ? " Sweeps cleared." : "");
     announceValue(hStatus_, sb);
 }
 
@@ -1563,10 +1716,7 @@ void MainWindow::startNewTrack() {
 
     engine_.setPatterns({ CbPattern{} });
     editingIdx_ = 0;
-    for (int k = 0; k < 7; ++k) {
-        paramSweeps_[k].clear();
-        engine_.setParamSweeps(k, {});
-    }
+    clearAllSweeps();
     currentFile_.clear();
     populateStepList();
     refreshPatternLabel();
@@ -1690,17 +1840,46 @@ void MainWindow::playSequenceFromCurrent() {
 }
 
 void MainWindow::deleteCurrentPattern() {
-    int cur = editingIdx_ + 1;
-    engine_.selectPattern(editingIdx_);
-    if (!engine_.deleteCurrentPattern()) {
+    const int d = editingIdx_;
+    // Needed after the delete, to clamp an end point into the pattern before.
+    const int prevLen = (d > 0) ? engine_.getPatternAt(d - 1).lastStep + 1 : 0;
+    if (!engine_.deletePattern(d)) {
         announceValue(hStatus_, "Can't delete — only one pattern remains.");
         return;
     }
+    // Sweeps address patterns by index. Endpoints after the deleted pattern
+    // move down one, so every sweep stays on the music it was written for. An
+    // endpoint INSIDE it clamps to the nearest surviving boundary - a start to
+    // the first step of the pattern that took its place, an end to the last
+    // step of the one before - and a sweep lying wholly inside it is removed,
+    // since there is nothing left for it to sweep.
+    int clamped = 0, removed = 0;
+    for (auto& list : paramSweeps_) {
+        std::vector<Sweep> kept;
+        kept.reserve(list.size());
+        for (Sweep s : list) {
+            const bool startIn = s.startPattern == d, endIn = s.endPattern == d;
+            if ((startIn && endIn) || (endIn && d == 0)) { ++removed; continue; }
+            if (startIn)                  { s.startStep = 0; ++clamped; }
+            else if (s.startPattern > d)  { --s.startPattern; }
+            if (endIn)                    { s.endPattern = d - 1; s.endStep = prevLen - 1;
+                                            if (!startIn) ++clamped; }
+            else if (s.endPattern > d)    { --s.endPattern; }
+            kept.push_back(s);
+        }
+        list.swap(kept);
+    }
+    pushAllSweeps(engine_);
+    refreshSweptLabels();
     clampEditingIdx();
     populateStepList();
     refreshPatternLabel();
-    char sb[96]; _snprintf_s(sb, _TRUNCATE, "Deleted pattern %d. Now editing pattern %d of %d.",
-                              cur, editingIdx_ + 1, engine_.patternCount());
+    char extra[96] = "";
+    if (clamped || removed)
+        _snprintf_s(extra, _TRUNCATE, " %d sweep%s clamped to its neighbours, %d removed.",
+                    clamped, clamped == 1 ? "" : "s", removed);
+    char sb[200]; _snprintf_s(sb, _TRUNCATE, "Deleted pattern %d. Now editing pattern %d of %d.%s",
+                               d + 1, editingIdx_ + 1, engine_.patternCount(), extra);
     announceValue(hStatus_, sb);
 }
 
@@ -1843,9 +2022,9 @@ void MainWindow::onSliderScroll(HWND slider) {
     }
     if (slider == hAccentSquelch_ && hAccentSquelchValue_) {
         int pos = static_cast<int>(SendMessageW(hAccentSquelch_, TBM_GETPOS, 0, 0));
-        // Slider 0..100 → sq 1.0..2.0. 0 is Frank's original TB-303 accent
-        // behavior; 100 doubles the squelch buildup on successive accents.
-        float sq = 1.0f + pos * 0.01f;
+        // Slider 0..200 → sq 0.0..2.0. 100 is Frank's original TB-303 accent
+        // behavior, 0 no stacking, 200 doubles the buildup on successive accents.
+        float sq = pos / 100.0f;
         engine_.setParam(CbParam::AccentSquelch, sq);
         wchar_t buf[16]; swprintf(buf, 16, L"%d%%", pos);
         SetWindowTextW(hAccentSquelchValue_, buf);
@@ -1895,6 +2074,9 @@ void MainWindow::loadCbFile() {
     }
     editingIdx_ = 0;
     engine_.setParam(CbParam::Tempo, preset->tempo);
+    // Importing a module starts a new song: the previous song's interactive
+    // sweeps would otherwise keep playing over it, aimed at its patterns.
+    const size_t cleared = clearAllSweeps();
     // Apply the sweeps — decoded via Ghidra of CREAKBOX.EXE.
     CBEngine::Sweep sweeps[7];
     for (int i = 0; i < 7; ++i) {
@@ -1917,31 +2099,41 @@ void MainWindow::loadCbFile() {
     populateStepList();
     refreshPatternLabel();
     char sb[256];
-    _snprintf_s(sb, _TRUNCATE, "Loaded %s (%zu patterns, tempo %d).",
+    _snprintf_s(sb, _TRUNCATE, "Loaded %s (%zu patterns, tempo %d).%s",
         fromWide(PathFindFileNameW(path)).c_str(),
-        preset->patterns.size(), static_cast<int>(preset->tempo));
+        preset->patterns.size(), static_cast<int>(preset->tempo),
+        cleared ? " Sweeps cleared." : "");
     announceValue(hStatus_, sb);
 }
 
 
-// Write a 16-bit mono PCM WAV to `path`. Input is the engine's stereo
-// interleaved float buffer; since both channels always carry identical
-// samples, we write the left channel only — mono is half the file size
-// with no audible difference.
-static bool writeWavFile16(const std::wstring& path, const std::vector<float>& interleaved,
-                            int sampleRate, std::string& err) {
+// Render `engine` (already set up and running) straight into a 16-bit mono PCM
+// WAV, a block at a time. Both output channels always carry identical
+// samples, so only the left one is written. Streaming rather than rendering
+// the whole song into memory first keeps a long song from needing hundreds of
+// megabytes, and every write is checked - a full disk used to produce a
+// truncated file and a "Rendered" message.
+static bool renderWavFile16(const std::wstring& path, CBEngine& engine,
+                            long long totalSamples, int sampleRate, std::string& err) {
+    const uint16_t channels = 1;
+    const uint16_t bitsPerSample = 16;
+    const long long dataBytes64 = totalSamples * (long long)sizeof(int16_t);
+    if (totalSamples <= 0 || dataBytes64 + 36 > 0xFFFFFFFFLL) {
+        err = "the song is too long for a WAV file (over 4 GB)";
+        return false;
+    }
     HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr,
                             CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) { err = "cannot create file"; return false; }
-    const uint16_t channels = 1;
-    const uint16_t bitsPerSample = 16;
     const uint32_t byteRate = sampleRate * channels * (bitsPerSample / 8);
     const uint16_t blockAlign = channels * (bitsPerSample / 8);
-    const size_t   monoSamples = interleaved.size() / 2;
-    const uint32_t dataBytes = static_cast<uint32_t>(monoSamples * sizeof(int16_t));
+    const uint32_t dataBytes = static_cast<uint32_t>(dataBytes64);
     const uint32_t fileBytes = 36 + dataBytes;
-    DWORD written = 0;
-    auto w = [&](const void* p, DWORD n) { WriteFile(h, p, n, &written, nullptr); };
+    bool ok = true;
+    auto w = [&](const void* p, DWORD n) {
+        DWORD written = 0;
+        if (ok && (!WriteFile(h, p, n, &written, nullptr) || written != n)) ok = false;
+    };
     w("RIFF", 4); w(&fileBytes, 4); w("WAVE", 4);
     w("fmt ", 4);
     uint32_t fmtSize = 16; uint16_t fmtTag = 1; // PCM
@@ -1949,27 +2141,35 @@ static bool writeWavFile16(const std::wstring& path, const std::vector<float>& i
     uint32_t sr = static_cast<uint32_t>(sampleRate);
     w(&sr, 4); w(&byteRate, 4); w(&blockAlign, 2); w(&bitsPerSample, 2);
     w("data", 4); w(&dataBytes, 4);
-    // Convert floats to int16 and write in chunks to keep memory bounded.
-    // Take the left channel only (index i*2); right is identical.
-    std::vector<int16_t> chunk;
-    chunk.reserve(4096);
-    for (size_t i = 0; i < monoSamples; ++i) {
-        float v = interleaved[i * 2];
-        if (v > 1.0f) v = 1.0f;
-        if (v < -1.0f) v = -1.0f;
-        chunk.push_back(static_cast<int16_t>(v * 32767.0f));
-        if (chunk.size() >= 4096) {
-            w(chunk.data(), static_cast<DWORD>(chunk.size() * sizeof(int16_t)));
-            chunk.clear();
+    const int blockSize = 512;
+    std::vector<float> buf(blockSize * 2);
+    std::vector<int16_t> chunk(blockSize);
+    for (long long pos = 0; ok && pos < totalSamples; pos += blockSize) {
+        const int n = (int)std::min<long long>(blockSize, totalSamples - pos);
+        engine.process(buf.data(), n);
+        for (int i = 0; i < n; ++i) {
+            float v = buf[i * 2];
+            if (v > 1.0f) v = 1.0f;
+            if (v < -1.0f) v = -1.0f;
+            chunk[i] = static_cast<int16_t>(v * 32767.0f);
         }
+        w(chunk.data(), static_cast<DWORD>(n * sizeof(int16_t)));
     }
-    if (!chunk.empty()) w(chunk.data(), static_cast<DWORD>(chunk.size() * sizeof(int16_t)));
     CloseHandle(h);
-    return true;
+    if (!ok) { err = "write failed (disk full?)"; DeleteFileW(path.c_str()); }
+    return ok;
 }
 
 void MainWindow::saveWavFile() {
-    wchar_t path[MAX_PATH]{ L'c', ':', '\\', 'c', 'b', '3', '0', '3', '.', 'w', 'a', 'v', 0 };
+    // Start from the song's own name and folder. The old default was
+    // c:\cb303.wav, and the root of C: is not writable without elevation.
+    wchar_t path[MAX_PATH]{};
+    if (!currentFile_.empty()) {
+        wcscpy_s(path, currentFile_.c_str());
+        PathRenameExtensionW(path, L".wav");
+    } else {
+        wcscpy_s(path, L"creakbox.wav");
+    }
     OPENFILENAMEW ofn{ sizeof(ofn) };
     ofn.hwndOwner = hwnd_;
     ofn.lpstrFilter = L"Wave audio (*.wav)\0*.wav\0";
@@ -1979,46 +2179,43 @@ void MainWindow::saveWavFile() {
     ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
     if (!GetSaveFileNameW(&ofn)) return;
 
-    // Render the full sequence once through at the current audio sample rate.
-    // Use a detached CBEngine so the main realtime engine keeps playing.
+    // Render the full sequence once through at the current audio sample rate,
+    // on a private engine so the live one keeps playing. It gets the WHOLE
+    // song: patterns, every parameter, and every sweep - it used to get no
+    // sweeps at all, so an exported track never moved.
+    const double sampleRate = audio_.sampleRate();
     CBEngine renderEngine;
-    renderEngine.setSampleRate(audio_.sampleRate());
-    renderEngine.setPatterns({engine_.getPatternAt(editingIdx_)});  // seed; overwritten below
-    // Actually copy all patterns from main engine:
+    renderEngine.setSampleRate(sampleRate);
     std::vector<CbPattern> pats;
     for (int i = 0; i < engine_.patternCount(); ++i) pats.push_back(engine_.getPatternAt(i));
     renderEngine.setPatterns(pats);
-    // Copy slider parameter values
-    for (int p = 0; p < int(CbParam::NumParams); ++p)
+    for (int p = 0; p < int(CbParam::NumParams); ++p) {
+        if (p == int(CbParam::RunStop)) continue;   // transport is set below
         renderEngine.setParam(static_cast<CbParam>(p), engine_.getParam(static_cast<CbParam>(p)));
+    }
+    pushAllSweeps(renderEngine);
 
-    // Length: play the full song order once through.
+    // Length: the song once through, with the sequencer's own arithmetic, so
+    // pattern lengths and triplet feel count. It used to assume every pattern
+    // was 16 straight steps: a song of 4-step patterns rendered four times
+    // over, and a 64-step one stopped a quarter of the way in.
     const float bpm = engine_.getParam(CbParam::Tempo);
-    const int samplesPerStep = static_cast<int>((audio_.sampleRate() * 60.0) / (bpm * 4.0));
-    const int totalSamples = samplesPerStep * 16 * engine_.patternCount();
-    std::vector<float> buf(totalSamples * 2, 0.0f);
+    const long long totalSamples = CBEngine::songLengthSamples(pats, sampleRate, bpm);
 
     renderEngine.setPlayMode(CBEngine::PlayMode::FullSequence);
     renderEngine.setRunning(true, /*restartFromFirstPattern=*/true);
-    // Render in blocks of 512 samples
-    const int blockSize = 512;
-    int pos = 0;
-    while (pos < totalSamples) {
-        int n = ((blockSize) < (totalSamples - pos) ? (blockSize) : (totalSamples - pos));
-        renderEngine.process(buf.data() + pos * 2, n);
-        pos += n;
-    }
-    renderEngine.setRunning(false);
-
     std::string err;
-    if (!writeWavFile16(path, buf, static_cast<int>(audio_.sampleRate()), err)) {
+    const bool ok = renderWavFile16(path, renderEngine, totalSamples,
+                                    static_cast<int>(sampleRate), err);
+    renderEngine.setRunning(false);
+    if (!ok) {
         MessageBoxW(hwnd_, toWide("WAV save failed: " + err).c_str(),
                     L"Creakbox", MB_OK | MB_ICONERROR);
         return;
     }
     char sb[256];
-    _snprintf_s(sb, _TRUNCATE, "Rendered %d samples (%0.1f sec) to %s.",
-        totalSamples, totalSamples / audio_.sampleRate(),
+    _snprintf_s(sb, _TRUNCATE, "Rendered %lld samples (%0.1f sec) to %s.",
+        totalSamples, totalSamples / sampleRate,
         fromWide(PathFindFileNameW(path)).c_str());
     announceValue(hStatus_, sb);
 }
@@ -2111,19 +2308,11 @@ void MainWindow::loadRoqFile() {
         Sweep ui;
         ui.startPattern = sw.startPat; ui.startStep = sw.startStep; ui.startValue = sw.startVal;
         ui.endPattern   = sw.endPat;   ui.endStep   = sw.endStep;   ui.endValue   = sw.endVal;
+        ui.hold         = sw.hold;
         paramSweeps_[sw.sliderIdx].push_back(ui);
     }
-    for (int k = 0; k < 7; ++k) {
-        std::vector<CBEngine::ParamSweep> es;
-        es.reserve(paramSweeps_[k].size());
-        for (const auto& s : paramSweeps_[k]) {
-            CBEngine::ParamSweep e;
-            e.startPat = s.startPattern; e.startStep = s.startStep; e.startVal = s.startValue;
-            e.endPat   = s.endPattern;   e.endStep   = s.endStep;   e.endVal   = s.endValue;
-            es.push_back(e);
-        }
-        engine_.setParamSweeps(k, es);
-    }
+    pushAllSweeps(engine_);
+    refreshSweptLabels();
 
     wchar_t tbuf[16]; swprintf(tbuf, 16, L"%d", static_cast<int>(song->tempo));
     SetWindowTextW(hTempo_, tbuf);
@@ -2198,6 +2387,7 @@ void MainWindow::saveRoqFile() {
             sw.sliderIdx = k;
             sw.startPat = s.startPattern; sw.startStep = s.startStep; sw.startVal = s.startValue;
             sw.endPat   = s.endPattern;   sw.endStep   = s.endStep;   sw.endVal   = s.endValue;
+            sw.hold     = s.hold;
             song.sweeps.push_back(sw);
         }
     }
@@ -2384,10 +2574,11 @@ LRESULT MainWindow::proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 int pat  = engine_.currentPatternIndex();
                 int step = engine_.currentStepIndex();
                 int pats = engine_.patternCount();
+                const int len = engine_.getPatternAt(pat).lastStep + 1;
                 char sb[128];
                 _snprintf_s(sb, _TRUNCATE,
-                            "Playing  pattern %d/%d, step %d/16  (audio %.0f Hz)",
-                            pat + 1, pats, step + 1, audio_.sampleRate());
+                            "Playing  pattern %d/%d, step %d/%d  (audio %.0f Hz)",
+                            pat + 1, pats, step + 1, len, audio_.sampleRate());
                 auto w = toWide(sb);
                 SetWindowTextW(hStatus_, w.c_str());
                 // deliberately don't fire EVENT_OBJECT_VALUECHANGE here —

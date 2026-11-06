@@ -19,6 +19,7 @@ public:
     struct Sweep {
         int startPattern = 0, startStep = 0, startValue = 0;
         int endPattern   = 0, endStep   = 15, endValue  = 0;
+        bool hold = false;   // keep the end value until the next sweep starts
     };
 
     bool create();
@@ -115,7 +116,7 @@ private:
     HWND hStepPitch_ = nullptr;     // Combobox: 61 items (Rest + C0..B4)
     HWND hStepSlide_ = nullptr;     // Checkbox
     HWND hStepAccent_ = nullptr;    // Checkbox
-    HWND hStepReverse_ = nullptr;   // Checkbox: per-step reverse (EnvMod sign flip)
+    HWND hStepReverse_ = nullptr;   // Checkbox: per-step reverse (filter envelope backwards)
     int  focusedStep_ = 0;          // which step the value controls reflect
     HWND hStatus_ = nullptr;
     // Last AudioEngine::deviceGeneration() announced. The audio thread bumps
@@ -127,6 +128,13 @@ private:
     HWND hSliders_[7]{};
     HWND hSliderLabels_[7]{};
     HWND hSliderValues_[7]{};
+    // The label and trackbar names as built, before any "(2 sweeps)" suffix.
+    std::wstring sliderLabelBase_[7];
+    std::wstring sliderPlainBase_[7];
+    // Says in each slider's NAME how many sweeps it carries - the name is what
+    // a screen reader reads on focus, and without it nothing tells you that
+    // moving a swept slider will be overridden at the next step.
+    void refreshSweptLabels();
     void updateSliderValue(int idx);
     void onSliderScroll(HWND slider);
 
@@ -140,6 +148,17 @@ private:
 
     // Per-parameter list of sweeps (see public Sweep struct).
     std::vector<Sweep> paramSweeps_[7];
+    // The one place a UI sweep list becomes an engine sweep list. Used for the
+    // live engine and for the WAV export's private engine alike - the export
+    // once forgot to copy sweeps at all, because every call site had its own
+    // hand-written conversion loop.
+    void pushSweeps(CBEngine& target, int sliderIdx) const;
+    void pushAllSweeps(CBEngine& target) const;
+    // Empties every slider's sweep list, in the UI and the engine. Returns how
+    // many sweeps there were, so the caller can say so.
+    size_t clearAllSweeps();
+    // The list as it was when the sweep editor opened, restored on Cancel.
+    std::vector<Sweep> sweepSnapshot_;
     Sweep sweepClipboard_;
     bool  sweepClipboardValid_ = false;
 

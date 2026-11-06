@@ -103,11 +103,6 @@ CBEngine::CBEngine() {
     params_[int(CbParam::CompDepth)].store(0.0f);   // 0 = compressor off
     params_[int(CbParam::RingHz)].store(100.0f);    // Hz, stored directly
     params_[int(CbParam::RingAmount)].store(0.0f);  // 0 = ring modulator off
-    // Mirror into baseParam_ so sweep fallbacks start at the same defaults.
-    for (int i = 0; i < int(CbParam::NumParams); ++i) {
-        baseParam_[i].store(params_[i].load(std::memory_order_relaxed),
-                            std::memory_order_relaxed);
-    }
 
     // Generate a random pattern on every startup so the synth makes noise
     // even before the user loads a .roq file. Nicely flavour at medium
@@ -116,6 +111,8 @@ CBEngine::CBEngine() {
     // The idle buffer is left at its default and is overwritten from live by
     // the first SongWriter, so the two never diverge.
     song_[0].patterns.assign(1, makeRandomPattern(RandomFlavor::Nicely, 0.5f));
+    freshIds(song_[0]);
+    reindex(song_[0]);
 
     resetFilters();
 }
@@ -232,7 +229,6 @@ void CBEngine::setSampleRate(double sr) {
 }
 
 void CBEngine::setParam(CbParam p, float v) {
-    baseParam_[int(p)].store(v, std::memory_order_relaxed);
     params_[int(p)].store(v, std::memory_order_relaxed);
     if (p == CbParam::RunStop)   running_.store(v > 0.5f, std::memory_order_relaxed);
     // boxSndType_ is deliberately NOT set here. It used to be, from whichever
@@ -252,15 +248,40 @@ CBEngine::SongWriter::SongWriter(CBEngine& e)
     // overwrite. Bounded by one audio block (~11 ms at 512 frames / 44.1 kHz),
     // and this is the UI thread, which is allowed to wait. The audio thread
     // never waits for us.
-    while (e_.readerIdx_.load(std::memory_order_acquire) == next_)
+    while (e_.readerIdx_.load(std::memory_order_seq_cst) == next_)
         std::this_thread::yield();
     e_.song_[next_] = e_.song_[e_.liveIdx_.load(std::memory_order_relaxed)];
 }
 
 void CBEngine::SongWriter::commit() {
-    if (e_.song_[next_].patterns.empty())        // invariant the reader relies on
-        e_.song_[next_].patterns.push_back(CbPattern{});
-    e_.liveIdx_.store(next_, std::memory_order_release);
+    SongData& d = e_.song_[next_];
+    if (d.patterns.empty())                      // invariant the reader relies on
+        d.patterns.push_back(CbPattern{});
+    reindex(d);
+    ++d.serial;   // copied from live, so this is always new
+    // seq_cst, not release: the reader's publish-then-recheck is a Dekker
+    // handshake, and the NEXT writer's load of readerIdx_ must not be ordered
+    // before this store. The writer mutex happens to fence on today's
+    // platforms; this makes the protocol not depend on that.
+    e_.liveIdx_.store(next_, std::memory_order_seq_cst);
+}
+
+void CBEngine::freshIds(SongData& d) {
+    d.patIds.clear();
+    for (size_t i = 0; i < d.patterns.size(); ++i) d.patIds.push_back(d.nextPatId++);
+}
+
+void CBEngine::reindex(SongData& d) {
+    if (d.patIds.size() != d.patterns.size()) freshIds(d);
+    // Allocation here is on the UI thread, inside a writer; the audio thread
+    // only ever reads the finished vector.
+    d.patStart.resize(d.patterns.size() + 1);
+    int at = 0;
+    for (size_t i = 0; i < d.patterns.size(); ++i) {
+        d.patStart[i] = at;
+        at += d.patterns[i].lastStep + 1;
+    }
+    d.patStart[d.patterns.size()] = at;
 }
 
 void CBEngine::setParamSweeps(int sliderIdx, const std::vector<ParamSweep>& sweeps) {
@@ -277,6 +298,7 @@ float CBEngine::getParam(CbParam p) const {
 void CBEngine::setPattern(const CbPattern& p) {
     SongWriter w(*this);
     w.data().patterns.assign(1, p);
+    freshIds(w.data());
     w.commit();
     patternIdx_.store(0, std::memory_order_relaxed);
 }
@@ -284,6 +306,7 @@ void CBEngine::setPatterns(const std::vector<CbPattern>& v) {
     SongWriter w(*this);
     if (v.empty()) w.data().patterns.assign(1, CbPattern{});
     else           w.data().patterns = v;
+    freshIds(w.data());
     w.commit();
     patternIdx_.store(0, std::memory_order_relaxed);
 }
@@ -312,27 +335,29 @@ void CBEngine::selectPattern(int idx) {
     if (n <= 0) return;
     patternIdx_.store(std::clamp(idx, 0, n - 1), std::memory_order_relaxed);
 }
-int CBEngine::insertPatternAfterCurrent() {
+// Neither of these touches patternIdx_. They used to take "current" to mean the
+// playback index and then move it - so adding a pattern while the song played
+// threw playback onto the new, empty pattern. Playback now follows the pattern
+// it was on by identity; see the patIds note in process().
+int CBEngine::insertPatternAfter(int idx) {
     SongWriter w(*this);
-    auto& pats = w.data().patterns;
-    int at = patternIdx_.load(std::memory_order_relaxed) + 1;
+    SongData& d = w.data();
+    int at = idx + 1;
     if (at < 0) at = 0;
-    if (at > (int)pats.size()) at = (int)pats.size();
-    pats.insert(pats.begin() + at, CbPattern{});
+    if (at > (int)d.patterns.size()) at = (int)d.patterns.size();
+    d.patterns.insert(d.patterns.begin() + at, CbPattern{});
+    d.patIds.insert(d.patIds.begin() + at, d.nextPatId++);
     w.commit();
-    patternIdx_.store(at, std::memory_order_relaxed);
     return at;
 }
-bool CBEngine::deleteCurrentPattern() {
+bool CBEngine::deletePattern(int idx) {
     SongWriter w(*this);
-    auto& pats = w.data().patterns;
-    if (pats.size() <= 1) return false;                           // no commit
-    const int at = std::clamp(patternIdx_.load(std::memory_order_relaxed), 0, (int)pats.size() - 1);
-    pats.erase(pats.begin() + at);
-    const int newSize = (int)pats.size();
+    SongData& d = w.data();
+    if (d.patterns.size() <= 1) return false;                     // no commit
+    if (idx < 0 || idx >= (int)d.patterns.size()) return false;   // no commit
+    d.patterns.erase(d.patterns.begin() + idx);
+    d.patIds.erase(d.patIds.begin() + idx);
     w.commit();
-    if (patternIdx_.load(std::memory_order_relaxed) >= newSize)
-        patternIdx_.store(newSize - 1, std::memory_order_relaxed);
     return true;
 }
 int CBEngine::currentPatternIndex() const {
@@ -368,6 +393,10 @@ void CBEngine::setRunning(bool run, bool restartFromFirstPattern) {
 // Audio thread only. Same work setRunning() used to do inline, in the same
 // order, so a render started immediately after a transport change is unchanged.
 void CBEngine::applyTransportReset(TransportReset r) {
+    // Sweep overrides belong to a playing song position. Stopped, the sliders
+    // are what you hear; started, the first step evaluates them afresh.
+    for (int i = 0; i < int(CbParam::NumParams); ++i) sweptOn_[i] = false;
+    stepFrac_ = 0.0;
     if (r == TransportReset::Stop) {
         // On stop: silence the oscillator and clear any pending slide so
         // a glide in progress doesn't keep multiplying boxOscFrq into
@@ -433,6 +462,24 @@ void CBEngine::resetFilters() {
     boxSlide_ = 1.0;
 }
 
+// The step that follows (p, s) in what will actually PLAY: the next step of the
+// same pattern, or - at the pattern's end - step 0 of the next pattern in the
+// song (FullSequence) or of the same pattern again (looping one pattern).
+//
+// One function, used by everything that looks ahead: the slide decision in
+// triggerStep(), the glide target, and the tie walk below. They used to
+// disagree at the bar line - the slide decision looked at THIS pattern's step
+// 0, the glide target at the NEXT pattern's - which was invisible only because
+// resetFilters() then cancelled the slide anyway.
+static void nextPlayedStep(const std::vector<CbPattern>& pats, bool fullSequence,
+                           int p, int s, int& np, int& ns) {
+    const int count = (int)pats.size();
+    if (count <= 0) { np = 0; ns = 0; return; }
+    if (s < pats[p].lastStep) { np = p; ns = s + 1; return; }
+    ns = 0;
+    np = fullSequence ? (p + 1) % count : p;
+}
+
 // How many samples a note starting at `step` will actually *sound* for: its
 // own step, plus every step tied to it by a slide, less the tail of the final
 // step after the gate closes. Only "reverse step" needs this - a backwards
@@ -440,26 +487,41 @@ void CBEngine::resetFilters() {
 // the note stops being audible, not when the step ends. Aiming at the step
 // boundary instead would put the brightest moment after the gate had already
 // shut, which is silent and therefore pointless.
-static int audibleNoteLength(const CbPattern& pat, int step, int samplesPerStep) {
-    const int n = pat.lastStep + 1;
-    int tied = 1;
-    int i = step;
+//
+// The walk follows nextPlayedStep(), so a tie that crosses the bar line runs on
+// into the pattern that actually plays next, at that pattern's step length.
+// Where every step is the same whole number of samples, the sum below is
+// exactly `tied * firstLen`, which is what this used to compute.
+static int audibleNoteLength(const std::vector<CbPattern>& pats, int patIdx, int step,
+                             bool fullSequence, int firstLen,
+                             double sampleRate, double tempo) {
+    const int count = (int)pats.size();
+    if (count <= 0) return (firstLen > 1) ? firstLen : 1;
     // Same condition triggerStep() uses for bSlideNext_, walked forward. The
-    // guard is not paranoia: a pattern with a slide on every step would
+    // guard is not paranoia: a song with a slide on every step would
     // otherwise never terminate.
-    for (int guard = 0; guard < n; ++guard) {
-        const int next = (i < pat.lastStep) ? i + 1 : 0;
-        if (!(pat.steps[i].slide && pat.steps[i].pitch != 0 && pat.steps[next].pitch != 0))
+    int guardMax = 0;
+    if (fullSequence) { for (const auto& q : pats) guardMax += q.lastStep + 1; }
+    else              { guardMax = pats[patIdx].lastStep + 1; }
+    int p = patIdx, i = step;
+    double total   = (double)firstLen;
+    double lastLen = (double)firstLen;
+    for (int guard = 0; guard < guardMax; ++guard) {
+        int np, ns;
+        nextPlayedStep(pats, fullSequence, p, i, np, ns);
+        const CbStep& cur = pats[p].steps[i];
+        if (!(cur.slide && cur.pitch != 0 && pats[np].steps[ns].pitch != 0))
             break;
-        i = next;
-        ++tied;
+        p = np; i = ns;
+        lastLen = CBEngine::exactStepSamples(sampleRate, tempo, pats[p].triplet);
+        total  += lastLen;
     }
     // triggerStep() re-latches boxAccent_ on every tied step, so the gate
     // threshold that actually ends the note belongs to the *last* step of the
     // tie, not the first. Accented steps hold the gate open ~25% longer.
-    const double thresh = ((double)samplesPerStep * (1.0 / 1.9))
-                        * (1.0 - (pat.steps[i].accent ? 0.25 : 0.0));
-    const double len = (double)tied * (double)samplesPerStep - thresh;
+    const double thresh = (lastLen * (1.0 / 1.9))
+                        * (1.0 - (pats[p].steps[i].accent ? 0.25 : 0.0));
+    const double len = total - thresh;
     return (len > 1.0) ? (int)len : 1;
 }
 
@@ -507,19 +569,106 @@ void CBEngine::triggerStep(const CbStep& currStep, const CbStep& nextStep) {
     bSlideNext_ = currStep.slide && currStep.pitch != 0 && nextStep.pitch != 0;
 }
 
-// Samples per sequencer step. The straight branch is written exactly as it
-// always was rather than as a multiply by 1.0, so the off path is bit-identical
-// by construction instead of by rounding luck - and a second expression beats a
-// factor inside a verified one.
+// Samples per sequencer step, exactly - a fraction in general. The straight
+// branch is the expression it always was, so where it comes out whole the
+// sequencer plays exactly the steps it always played.
 //
 // Nothing else in the engine knows what a step is: the gate threshold,
 // audibleNoteLength(), the reversed envelope and the slide rate all derive from
 // this number, so they follow a triplet pattern automatically.
-static int stepSamples(double sampleRate, double tempo, bool triplet) {
-    const int n = triplet
-        ? static_cast<int>((sampleRate * 60.0) / (tempo * 3.0))   // eighth triplet
-        : static_cast<int>((sampleRate * 60.0) / (tempo * 4.0));  // sixteenth
+double CBEngine::exactStepSamples(double sampleRate, double tempo, bool triplet) {
+    return triplet
+        ? (sampleRate * 60.0) / (tempo * 3.0)    // eighth triplet
+        : (sampleRate * 60.0) / (tempo * 4.0);   // sixteenth
+}
+
+namespace {
+
+// A step is the whole part of (exact length + the fraction owed so far); the
+// rest is owed to the next step. Truncation is what the sequencer always did,
+// so with nothing owed this is the old integer step length exactly.
+inline int stepLenFrom(double exact, double owed) {
+    const int n = static_cast<int>(exact + owed);
     return (n < 1) ? 1 : n;
+}
+inline double stepCarry(double exact, double owed, int len) {
+    double c = (exact + owed) - (double)len;
+    // A tempo change in the middle of a step can leave the step that was
+    // actually played longer or shorter than the new exact value says; keep
+    // the debt a fraction either way rather than paying it all at once.
+    if (c < 0.0)  c = 0.0;
+    if (c >= 1.0) c -= std::floor(c);
+    return c;
+}
+
+// The values derived from the seven sweepable parameters. These used to be
+// computed inline at the top of process(), once per block - so a sweep's new
+// value, written at a step boundary in the middle of a block, waited for the
+// NEXT block, and every note started with the previous step's value for up to
+// a whole buffer. How long depended on the audio buffer size, so the same
+// song sounded different on different sound cards. They are now recomputed at
+// every step boundary as well. The expressions are the original ones, verbatim
+// and in the same types, which is what keeps the no-sweep path bit-identical.
+struct Knobs {
+    double volume, accent, decayMul, decayMulInv, tune, twoPowTune, envMod, cutoff, preRezo;
+};
+
+Knobs deriveKnobs(float fVolume, float fTuning, float fCutoff, float fRezo, float fEnvMod,
+                  float fDecay, float fAccent, int sndType, bool resoBoost) {
+    Knobs k{};
+    // Volume scaling. Slider=100 lands at ~0.14 pass-through — chosen so
+    // even accented peaks stay below the dist() clipper at default settings,
+    // giving the user a clean bed to add outboard distortion later. Saw
+    // waveform runs slightly hotter than square, compensated with *1.5.
+    double knobVolume = fVolume * 0.14;
+    if (sndType == 0) knobVolume *= 1.5;
+    k.volume = knobVolume;
+    k.accent = fAccent * 0.65;
+    double knobDecay = fDecay;
+    // The reciprocal is what runs the envelope backwards for a reversed step:
+    // 4*r^(N-t) == (4*r^N) * (1/r)^t, so a time-reversed decay costs one
+    // different starting value and one different multiplier, nothing else.
+    k.decayMul    = knobDecay * 0.0005 + 0.9995;
+    k.decayMulInv = (k.decayMul > 0.0) ? (1.0 / k.decayMul) : 1.0;
+    // Tuning is bipolar in the rebuild: fTuning already comes in as -1..+1
+    // with 0 = neutral (VST used 0..1 with 0.5 as centre; slider widget
+    // now provides the bipolar range directly).
+    k.tune       = fTuning;
+    k.twoPowTune = std::pow(2.0, k.tune);
+    k.envMod     = fEnvMod;
+    double knobCutoff = (std::pow(2.0, fCutoff * 0.5) - 1.0);
+    k.cutoff = (std::pow(2.0, knobCutoff * 0.8) - 0.987);
+    double pre_knobRezo = (std::sin(fRezo * halfpi) * 75.0 + 25.0) / 100.0;
+    if (resoBoost) {
+        // Extend the ceiling rather than lifting the whole range: a quartic
+        // term is negligible through the usable part of the travel and only
+        // bites at the end, so the knob keeps its familiar feel and only the
+        // top ~10 % is new. Full travel lands near 1.06 at the filter, which
+        // is past the stability point - hence the _boost filter variant with
+        // its bounded resonant integrator.
+        pre_knobRezo += 0.07 * (double)fRezo * (double)fRezo * (double)fRezo * (double)fRezo;
+    }
+    k.preRezo = pre_knobRezo;
+    return k;
+}
+
+} // namespace
+
+long long CBEngine::songLengthSamples(const std::vector<CbPattern>& pats,
+                                      double sampleRate, double tempo) {
+    // Mirrors the sequencer step for step: the owed fraction starts at zero on
+    // transport start and is carried across pattern boundaries.
+    long long total = 0;
+    double owed = 0.0;
+    for (const auto& p : pats) {
+        const double exact = exactStepSamples(sampleRate, tempo, p.triplet);
+        for (int s = 0; s <= p.lastStep; ++s) {
+            const int len = stepLenFrom(exact, owed);
+            owed = stepCarry(exact, owed, len);
+            total += len;
+        }
+    }
+    return total;
 }
 
 void CBEngine::process(float* out, int frames) {
@@ -533,15 +682,8 @@ void CBEngine::process(float* out, int frames) {
     if (pendingReset != int(TransportReset::None))
         applyTransportReset(TransportReset(pendingReset));
 
-    const float fVolume   = params_[int(CbParam::Volume)].load(std::memory_order_relaxed);
     const float fTempo    = params_[int(CbParam::Tempo)].load(std::memory_order_relaxed);
     const float fWaveform = params_[int(CbParam::Waveform)].load(std::memory_order_relaxed);
-    const float fTuning   = params_[int(CbParam::Tuning)].load(std::memory_order_relaxed);
-    const float fCutoff   = params_[int(CbParam::Cutoff)].load(std::memory_order_relaxed);
-    const float fRezo     = params_[int(CbParam::Resonance)].load(std::memory_order_relaxed);
-    const float fEnvMod   = params_[int(CbParam::EnvMod)].load(std::memory_order_relaxed);
-    const float fDecay    = params_[int(CbParam::Decay)].load(std::memory_order_relaxed);
-    const float fAccent   = params_[int(CbParam::Accent)].load(std::memory_order_relaxed);
     const float fPWM        = params_[int(CbParam::PWM)].load(std::memory_order_relaxed);
     const float fSubLevel   = params_[int(CbParam::SubOscLevel)].load(std::memory_order_relaxed);
     const float fDupletWv   = params_[int(CbParam::DupletWaveform)].load(std::memory_order_relaxed);
@@ -582,8 +724,8 @@ void CBEngine::process(float* out, int frames) {
     const int   dupletSndType = fDupletWv > 0.5f ? 1 : 0;
     // Detune factor: -1..+1 = ±1 octave → frequency factor 2^detune.
     // 0 = unison, +1 = octave up, -1 = octave down, arbitrary fractions in
-    // between. Shared between the duplet osc and sub sine, so the sub
-    // follows the duplet's detune too (but still one octave below that).
+    // between. The sub oscillator does NOT follow it: it runs at half the MAIN
+    // oscillator's rate (see subOscPhase_ below).
     const double dupletFactor = std::pow(2.0, fDupletDet);
     // PWM thresholds for square, one per oscillator. Widened to ~1..99 %
     // duty at the extremes so the pulse narrows into near-silent spikes.
@@ -598,38 +740,18 @@ void CBEngine::process(float* out, int frames) {
     const double pwmLfoInc       = (fLfoRate > 0.0f) ? (double)fLfoRate / sampleRate_ : 0.0;
     boxSndType_ = fWaveform > 0.5f ? 1 : 0;
 
-    // Volume scaling. Slider=100 lands at ~0.14 pass-through — chosen so
-    // even accented peaks stay below the dist() clipper at default settings,
-    // giving the user a clean bed to add outboard distortion later. Saw
-    // waveform runs slightly hotter than square, compensated with *1.5.
-    double knobVolume = fVolume * 0.14;
-    if (boxSndType_ == 0) knobVolume *= 1.5;
-    double knobAccent = fAccent * 0.65;
-    double knobDecay  = fDecay;
-    // Hoisted out of the sample loop; it was computed inline per sample before,
-    // from the same block-constant knobDecay, so the value is unchanged. The
-    // reciprocal is what runs the envelope backwards for a reversed step:
-    // 4*r^(N-t) == (4*r^N) * (1/r)^t, so a time-reversed decay costs one
-    // different starting value and one different multiplier, nothing else.
-    const double decayMul    = knobDecay * 0.0005 + 0.9995;
-    const double decayMulInv = (decayMul > 0.0) ? (1.0 / decayMul) : 1.0;
-    // Tuning is bipolar in the rebuild: fTuning already comes in as -1..+1
-    // with 0 = neutral (VST used 0..1 with 0.5 as centre; slider widget
-    // now provides the bipolar range directly).
-    double knobTune   = fTuning;
-    double knobEnvMod = fEnvMod;
-    double knobCutoff = (std::pow(2.0, fCutoff * 0.5) - 1.0);
-    knobCutoff = (std::pow(2.0, knobCutoff * 0.8) - 0.987);
-    double pre_knobRezo = (std::sin(fRezo * halfpi) * 75.0 + 25.0) / 100.0;
-    if (bResoBoost) {
-        // Extend the ceiling rather than lifting the whole range: a quartic
-        // term is negligible through the usable part of the travel and only
-        // bites at the end, so the knob keeps its familiar feel and only the
-        // top ~10 % is new. Full travel lands near 1.06 at the filter, which
-        // is past the stability point - hence the _boost filter variant with
-        // its bounded resonant integrator.
-        pre_knobRezo += 0.07 * (double)fRezo * (double)fRezo * (double)fRezo * (double)fRezo;
-    }
+    // The seven sweepable parameters: the user's setting unless a sweep is
+    // overriding it right now. Re-derived at every step boundary (see Knobs).
+    auto eff = [this](CbParam p) -> float {
+        const int i = int(p);
+        return sweptOn_[i] ? sweptVal_[i] : params_[i].load(std::memory_order_relaxed);
+    };
+    auto knobsNow = [&]() {
+        return deriveKnobs(eff(CbParam::Volume), eff(CbParam::Tuning), eff(CbParam::Cutoff),
+                           eff(CbParam::Resonance), eff(CbParam::EnvMod), eff(CbParam::Decay),
+                           eff(CbParam::Accent), boxSndType_, bResoBoost);
+    };
+    Knobs K = knobsNow();
 
     const bool running = running_.load(std::memory_order_relaxed);
 
@@ -641,7 +763,7 @@ void CBEngine::process(float* out, int frames) {
     do {
         songIdx = liveIdx_.load(std::memory_order_acquire);
         readerIdx_.store(songIdx, std::memory_order_seq_cst);
-    } while (songIdx != liveIdx_.load(std::memory_order_acquire));
+    } while (songIdx != liveIdx_.load(std::memory_order_seq_cst));
 
     // Clears readerIdx_ on every exit path, so a writer is never left waiting
     // on a block that has already finished.
@@ -655,24 +777,118 @@ void CBEngine::process(float* out, int frames) {
     const Sweep* sweeps                = song.sweeps;
     const std::vector<ParamSweep>* paramSweeps = song.paramSweeps;
     const bool sweepsOn                = song.sweepsEnabled;
+    const std::vector<int>&      patStart = song.patStart;
+    const std::vector<uint32_t>& patIds   = song.patIds;
+    const int patCount = (int)pats.size();
+    const bool fullSeq = playMode_.load() == PlayMode::FullSequence;
 
     // Writers guarantee patterns is never empty; this is belt-and-braces for
     // the real-time path, and deliberately allocation-free if it ever fires.
     static const CbPattern kEmptyPattern{};
     int patIdx = patternIdx_.load(std::memory_order_relaxed);
-    if (patIdx < 0 || patIdx >= (int)pats.size()) patIdx = 0;
+    // A writer committed since the last block. If a pattern was inserted or
+    // deleted in front of the one playing, its index moved; find it again by
+    // identity so the playhead stays on the pattern it was on. A transport
+    // request this block has already said where to play, so leave that alone.
+    // If the playing pattern itself was deleted, carry on with the one that
+    // took its place - the pattern that would have played next anyway.
+    if (song.serial != lastSongSerial_) {
+        if (running && pendingReset == int(TransportReset::None)
+            && playingPatId_ != 0 && patCount > 0) {
+            int found = -1;
+            for (int p = 0; p < (int)patIds.size(); ++p)
+                if (patIds[p] == playingPatId_) { found = p; break; }
+            if (found < 0) found = (patIdx >= 0) ? patIdx % patCount : 0;
+            if (found != patIdx) {
+                patIdx = found;
+                patternIdx_.store(patIdx, std::memory_order_relaxed);
+            }
+        }
+        lastSongSerial_ = song.serial;
+    }
+    if (patIdx < 0 || patIdx >= patCount) patIdx = 0;
     // A pointer into the live buffer, not a per-block copy of the pattern.
     const CbPattern* pat = pats.empty() ? &kEmptyPattern : &pats[patIdx];
+    if (patIdx < (int)patIds.size()) playingPatId_ = patIds[patIdx];
+    auto patAt = [&](int p) -> const CbPattern& {
+        return (p >= 0 && p < patCount) ? pats[p] : kEmptyPattern;
+    };
 
-    // Samples per 16th note
-    samplesPerStep_ = stepSamples(sampleRate_, fTempo, pat->triplet);
+    // Length of the current step. Owed fraction included; see stepFrac_.
+    double stepExact = exactStepSamples(sampleRate_, fTempo, pat->triplet);
+    samplesPerStep_ = stepLenFrom(stepExact, stepFrac_);
+
+    // Interactive sweeps from the sweep-editor UI.
+    //
+    // ORDER IS UI SLIDER ORDER, and it deliberately differs from the legacy
+    // .cb table further down (search kLegacyIds). Do NOT "reconcile" the two —
+    // see the note at that second table for the evidence. This one is indexed
+    // by the main window's left-to-right slider order, documented in RoqIO.h,
+    // and it is what .roq sweeps and the sweep editor's sliderIdx mean.
+    static const CbParam kIds[7] = {
+        CbParam::Volume, CbParam::Cutoff, CbParam::Resonance, CbParam::EnvMod,
+        CbParam::Decay, CbParam::Accent, CbParam::Tuning
+    };
+    // Where (pattern, step) falls on the song's step timeline. A sweep advances
+    // the same amount per STEP wherever it is: positions used to be measured
+    // in patterns (pattern + step / its length), so a sweep over a 4-step and a
+    // 16-step pattern spent half its travel in the short one. Clamping the step
+    // keeps an endpoint inside its own pattern after the user shortens one
+    // underneath an existing sweep. An endpoint naming a pattern the song does
+    // not have stays past the end, in order, and is never reached.
+    auto posOf = [&](int p, int st) -> long {
+        if (st < 0) st = 0;
+        if (p >= 0 && p < patCount && p < (int)patStart.size()) {
+            const int n = pats[p].lastStep + 1;
+            if (st >= n) st = n - 1;
+            return (long)patStart[p] + st;
+        }
+        if (st > 63) st = 63;
+        const long end = patStart.empty() ? 0L : (long)patStart.back();
+        return (p < 0) ? (long)p * 64 + st : end + (long)(p - patCount) * 64 + st;
+    };
+    // For each slider: the first sweep whose [start, end] covers `cur`
+    // interpolates; failing that, the sweep that ended most recently before
+    // `cur` keeps its end value if it holds; failing that, no override and
+    // the slider's own setting applies.
+    auto evaluateSweeps = [&](long cur) {
+        for (int k = 0; k < 7; ++k) {
+            const auto& list = paramSweeps[k];
+            const ParamSweep* cover = nullptr;
+            const ParamSweep* before = nullptr;
+            long beforeEnd = 0;
+            float t = 0.0f;
+            for (const auto& sw : list) {
+                const long start = posOf(sw.startPat, sw.startStep);
+                const long end   = posOf(sw.endPat,   sw.endStep);
+                if (cur >= start && cur <= end) {
+                    cover = &sw;
+                    t = (end > start) ? (float)(cur - start) / (float)(end - start) : 0.0f;
+                    break;
+                }
+                if (end < cur && (!before || end > beforeEnd)) { before = &sw; beforeEnd = end; }
+            }
+            const int id = int(kIds[k]);
+            if (!cover && !(before && before->hold)) { sweptOn_[id] = false; continue; }
+            // Raw matches the UI sliders (-100..+100 bipolar, 0..100
+            // unipolar). Map to the param's native 0..1 (unipolar) or -1..+1
+            // (bipolar) range.
+            const float raw = cover
+                ? (float)cover->startVal + ((float)cover->endVal - (float)cover->startVal) * t
+                : (float)before->endVal;
+            float v = raw / 100.0f;
+            const bool bipolar = kIds[k] == CbParam::Resonance || kIds[k] == CbParam::EnvMod
+                              || kIds[k] == CbParam::Tuning;
+            if (!bipolar && v < 0.0f) v = 0.0f;   // Volume/Cutoff/Decay/Accent
+            sweptVal_[id] = v;
+            sweptOn_[id]  = true;
+        }
+    };
 
     // Envelope constants (from SilverBox.cpp wwelti branch)
     double boxMEG_c0, boxMEG_c1;
     if (boxAccent_) { boxMEG_c0 = -1.75;  boxMEG_c1 = 0.00009; }
     else            { boxMEG_c0 = -1.0;   boxMEG_c1 = 0.0000082; }
-
-    double two_power_knobTune = std::pow(2.0, knobTune);
 
     double gate_c0, gate_c1;
     if (gateStat_ == 0) { gate_c0 = 1.0; gate_c1 = 0.9; }
@@ -682,122 +898,45 @@ void CBEngine::process(float* out, int frames) {
         // --- sequencer tick ---
         if (running) {
             if (currentStep_ < 0 || samplesIntoStep_ >= samplesPerStep_) {
+                // Settle the step that just ended before sizing the next one.
+                if (currentStep_ >= 0)
+                    stepFrac_ = stepCarry(stepExact, stepFrac_, samplesPerStep_);
                 samplesIntoStep_ = 0;
                 currentStep_ = (currentStep_ + 1);
                 if (currentStep_ > pat->lastStep) {
                     // In FullSequence mode advance through all patterns in
                     // order, looping at the end. In CurrentPatternOnly mode
                     // stay on the initial pattern forever.
-                    if (playMode_.load() == PlayMode::FullSequence && !pats.empty()) {
-                        patIdx = (patIdx + 1) % (int)pats.size();
+                    if (fullSeq && patCount > 0) {
+                        patIdx = (patIdx + 1) % patCount;
                         pat = &pats[patIdx];
                         // Plain atomic store — this used to take patternMu_,
                         // the second lock the audio thread held per block.
                         patternIdx_.store(patIdx, std::memory_order_relaxed);
-                        // Step duration is a property of the PATTERN now, and
-                        // the pattern changes here, inside the sample loop -
-                        // while samplesPerStep_ is otherwise computed once per
-                        // block. Leaving it stale until the next block boundary
+                        if (patIdx < (int)patIds.size()) playingPatId_ = patIds[patIdx];
+                        // Step duration is a property of the PATTERN, and
+                        // the pattern changes here, inside the sample loop.
+                        // Leaving it stale until the next block boundary
                         // would run a triplet pattern following a straight one
                         // at the wrong rate for up to a whole buffer: a flam on
                         // the first note, once per loop, that moves with the
                         // audio buffer size. Recompute it here.
-                        samplesPerStep_ = stepSamples(sampleRate_, fTempo, pat->triplet);
+                        stepExact = exactStepSamples(sampleRate_, fTempo, pat->triplet);
                     }
                     currentStep_ = 0;
                 }
-                int nextStep = (currentStep_ < pat->lastStep) ? currentStep_ + 1 : 0;
+                samplesPerStep_ = stepLenFrom(stepExact, stepFrac_);
+                int nextPat, nextStep;
+                nextPlayedStep(pats, fullSeq, patIdx, currentStep_, nextPat, nextStep);
                 // Publish for the UI. Once per step, not per sample.
                 displayStep_.store(currentStep_, std::memory_order_relaxed);
-                if (currentStep_ == 0) resetFilters();
-                triggerStep(pat->steps[currentStep_], pat->steps[nextStep]);
 
-                // Reverse step: run the filter envelope backwards by starting
-                // boxDecay_ where the forward envelope would have *ended* and
-                // growing it back to 4.0 over the note. Not a sign flip - an
-                // inverted decay is fastest at the note's start, where a
-                // genuinely reversed note is slow first and peaks at the end.
-                // Seeded here rather than in triggerStep() because the tie
-                // walk needs the pattern, and skipped on a slide continuation
-                // because the head of the tie already sized the envelope for
-                // the whole note.
-                if (stepReverse_ && !bNoteSlide_ && gateStat_ == 0) {
-                    const int len = audibleNoteLength(*pat, currentStep_, samplesPerStep_);
-                    double start = 4.0 * std::pow(decayMul, (double)len);
-                    // Degenerate corner - very slow tempo, fastest decay, a long
-                    // tie - can underflow r^N to zero, and zero times anything
-                    // stays zero, which would strand the envelope at silence.
-                    // Flooring makes it peak early and hold instead, which is
-                    // the graceful failure rather than the silent one.
-                    if (!(start > 1e-30)) start = 1e-30;
-                    boxDecay_ = start;
-                }
-
-                // Interactive sweeps from the sweep-editor UI. For each slider
-                // find the first sweep whose [start, end] song-position range
-                // covers the current step; if found, override params_ with the
-                // interpolated value. Otherwise restore params_ from baseParam_
-                // so the slider's own setting applies.
-                {
-                    // ORDER IS UI SLIDER ORDER, and it deliberately differs from
-                    // the legacy .cb table further down (search kIds). Do NOT
-                    // "reconcile" the two — see the note at that second table
-                    // for the evidence. This one is indexed by the main window's
-                    // left-to-right slider order, documented in RoqIO.h, and it
-                    // is what .roq sweeps and the sweep editor's sliderIdx mean.
-                    static const CbParam kIds[7] = {
-                        CbParam::Volume, CbParam::Cutoff, CbParam::Resonance, CbParam::EnvMod,
-                        CbParam::Decay, CbParam::Accent, CbParam::Tuning
-                    };
-                    const int stepsPerPat = pat->lastStep + 1;
-                    const float songPos = (float)patIdx + (float)currentStep_ / (float)stepsPerPat;
-                    // A sweep endpoint has to be normalised by the length of the
-                    // pattern *it names*, not by the length of the one playing.
-                    // With every pattern 16 steps those were the same number and
-                    // the distinction did not exist; once lengths vary, dividing
-                    // "pattern 0 step 8" by a 4-step pattern's length yields 2.0
-                    // and silently relocates the endpoint two patterns along.
-                    // Clamping the step also keeps an endpoint inside its pattern
-                    // after the user shortens one underneath an existing sweep.
-                    const int patCount = (int)pats.size();
-                    auto posOf = [&](int p, int st) {
-                        const int n = (p >= 0 && p < patCount) ? pats[p].lastStep + 1 : 16;
-                        if (st < 0)  st = 0;
-                        if (st >= n) st = n - 1;
-                        return (float)p + (float)st / (float)n;
-                    };
-                    for (int k = 0; k < 7; ++k) {
-                        const auto& list = paramSweeps[k];
-                        bool applied = false;
-                        for (const auto& sw : list) {
-                            const float start = posOf(sw.startPat, sw.startStep);
-                            const float end   = posOf(sw.endPat,   sw.endStep);
-                            if (songPos < start || songPos > end) continue;
-                            float t = (end > start) ? (songPos - start) / (end - start) : 0.0f;
-                            float raw = (float)sw.startVal + ((float)sw.endVal - (float)sw.startVal) * t;
-                            // Raw matches the UI sliders (-100..+100 bipolar,
-                            // 0..100 unipolar). Map to the param's native 0..1
-                            // (unipolar) or -1..+1 (bipolar) range.
-                            float v;
-                            const CbParam id = kIds[k];
-                            if (id == CbParam::Resonance || id == CbParam::EnvMod
-                             || id == CbParam::Tuning) {
-                                v = raw / 100.0f;  // bipolar
-                            } else {
-                                v = raw / 100.0f;  // unipolar (Volume/Cutoff/Decay/Accent)
-                                if (v < 0.0f) v = 0.0f;
-                            }
-                            params_[int(id)].store(v, std::memory_order_relaxed);
-                            applied = true;
-                            break;
-                        }
-                        if (!applied) {
-                            params_[int(kIds[k])].store(
-                                baseParam_[int(kIds[k])].load(std::memory_order_relaxed),
-                                std::memory_order_relaxed);
-                        }
-                    }
-                }
+                // Sweeps BEFORE the note starts, and folded into the knob
+                // values right here, so the step's value is in force from its
+                // first sample - and so a reversed step below is sized with
+                // the swept Decay rather than the previous step's.
+                evaluateSweeps((patIdx < (int)patStart.size() ? (long)patStart[patIdx] : 0L)
+                               + currentStep_);
 
                 // Apply per-pattern sweep: each tab has 2 breakpoints with
                 // position = order + offset/100. Linearly interpolate; below
@@ -811,7 +950,9 @@ void CBEngine::process(float* out, int frames) {
                 // under "not safe to apply by default"). So this block is loaded,
                 // round-tripped and inert. It is kept because it is the decoded
                 // 2002 behaviour and the starting point for turning legacy sweeps
-                // back on; it is NOT dead code to be deleted casually.
+                // back on; it is NOT dead code to be deleted casually. It writes
+                // the same overrides as the interactive sweeps, after them, so
+                // it wins where both apply - as it did before.
                 if (sweepsOn) {
                     // Song position in pattern units (e.g. 0.5 = halfway through pattern 0).
                     const float songPos = (float)patIdx
@@ -835,7 +976,7 @@ void CBEngine::process(float* out, int frames) {
                     //
                     // Changing this table to match the other one would silently
                     // mis-map every sweep in all 56 shipped .cb modules.
-                    static const CbParam kIds[7] = {
+                    static const CbParam kLegacyIds[7] = {
                         CbParam::Volume, CbParam::Tuning, CbParam::Cutoff, CbParam::Resonance,
                         CbParam::EnvMod, CbParam::Decay, CbParam::Accent
                     };
@@ -860,9 +1001,44 @@ void CBEngine::process(float* out, int frames) {
                         // behaviour. Only Volume is floored at 0 to avoid
                         // phase cancellation at the mix bus.
                         float v = raw / 100.0f;
-                        if (kIds[k] == CbParam::Volume && v < 0.0f) v = 0.0f;
-                        params_[int(kIds[k])].store(v, std::memory_order_relaxed);
+                        if (kLegacyIds[k] == CbParam::Volume && v < 0.0f) v = 0.0f;
+                        sweptVal_[int(kLegacyIds[k])] = v;
+                        sweptOn_[int(kLegacyIds[k])]  = true;
                     }
+                }
+                K = knobsNow();
+
+                // The filter reset at every pattern start is the 2004 one
+                // ("reset filter every 16 steps"). It is skipped while a slide
+                // carries a note across the bar line: zeroing the gate, the
+                // filter memories and the oscillator under a note that is
+                // still sounding is a click, and it threw the glide away - the
+                // note never reached the pitch it was sliding to. The tie is
+                // one note; the reset belongs to the next new one. Note that
+                // pwmLfoPhase_ is untouched either way (invariant 1).
+                if (currentStep_ == 0 && !bNoteSlide_) resetFilters();
+                triggerStep(pat->steps[currentStep_], patAt(nextPat).steps[nextStep]);
+
+                // Reverse step: run the filter envelope backwards by starting
+                // boxDecay_ where the forward envelope would have *ended* and
+                // growing it back to 4.0 over the note. Not a sign flip - an
+                // inverted decay is fastest at the note's start, where a
+                // genuinely reversed note is slow first and peaks at the end.
+                // Seeded here rather than in triggerStep() because the tie
+                // walk needs the song, and skipped on a slide continuation
+                // because the head of the tie already sized the envelope for
+                // the whole note.
+                if (stepReverse_ && !bNoteSlide_ && gateStat_ == 0) {
+                    const int len = audibleNoteLength(pats, patIdx, currentStep_, fullSeq,
+                                                      samplesPerStep_, sampleRate_, fTempo);
+                    double start = 4.0 * std::pow(K.decayMul, (double)len);
+                    // Degenerate corner - very slow tempo, fastest decay, a long
+                    // tie - can underflow r^N to zero, and zero times anything
+                    // stays zero, which would strand the envelope at silence.
+                    // Flooring makes it peak early and hold instead, which is
+                    // the graceful failure rather than the silent one.
+                    if (!(start > 1e-30)) start = 1e-30;
+                    boxDecay_ = start;
                 }
 
                 // Refresh gate constants after triggerStep() updated gateStat_.
@@ -889,17 +1065,18 @@ void CBEngine::process(float* out, int frames) {
         tempAccentFrq_ += (boxAccentFrq_ - tempAccentFrq_) * 0.00144;
         tempAccentEnv_ += (boxAccentEnv_ - tempAccentEnv_) * 0.03;
         if (stepReverse_) {
-            boxDecay_ *= decayMulInv;
+            boxDecay_ *= K.decayMulInv;
             // 4.0 is where a forward envelope begins, so it is the ceiling a
-            // backwards one may reach. The clamp matters when the tie walk and
-            // the actual note length disagree - a slide across a pattern
-            // boundary, say - and turns an exponential runaway into a hold.
+            // backwards one may reach. The clamp matters if the tie walk and
+            // the actual note length ever disagree - a tempo change during a
+            // long reversed note, say - and turns an exponential runaway into
+            // a hold.
             if (boxDecay_ > 4.0) boxDecay_ = 4.0;
         } else {
-            boxDecay_ *= decayMul;
+            boxDecay_ *= K.decayMul;
         }
 
-        double boxCutoff = knobCutoff + (boxOscFrq_ / sampleRate_) * 0.33;
+        double boxCutoff = K.cutoff + (boxOscFrq_ / sampleRate_) * 0.33;
         // The two EnvMod terms collapse to knobEnvMod * (boxDecay_ - 2.0).
         // boxDecay_ runs 4.0 -> 0 across a normal note, so that factor sweeps
         // +2 -> -2 and the filter sweeps *through* the base cutoff rather than
@@ -907,14 +1084,14 @@ void CBEngine::process(float* out, int frames) {
         // reverses boxDecay_'s direction of travel above, which is what makes
         // it compose with sweeps on EnvMod - the parameter is never touched.
         double tempcutoff = boxCutoff * getTab2Interpolated(
-            boxMEG_ + (knobEnvMod * -2.0) + (boxDecay_ * knobEnvMod) + tempAccentFrq_ * knobAccent);
+            boxMEG_ + (K.envMod * -2.0) + (boxDecay_ * K.envMod) + tempAccentFrq_ * K.accent);
 
         // Oscillator phase. Frank's VST hardcoded 176400 as the denominator
         // (88200 * 2). At 44.1 kHz runtime, his code produces output at
         // freq/4 of cNoteFreq (so cNoteFreq[1]=130.813 plays at 32.7 Hz,
         // standard C1 bass register). To preserve that behaviour at any
         // sample rate, scale the denominator to sampleRate * 4.
-        const double phaseInc = twopi * (1.0 / (sampleRate_ * 4.0)) * boxOscFrq_ * two_power_knobTune;
+        const double phaseInc = twopi * (1.0 / (sampleRate_ * 4.0)) * boxOscFrq_ * K.twoPowTune;
         boxOsc_ += phaseInc;
         if (boxOsc_ > twopi) boxOsc_ -= twopi;
         // Duplet runs at main frequency × detune factor.
@@ -1006,7 +1183,7 @@ void CBEngine::process(float* out, int frames) {
         }
         snd = (double)IIR_doIIRhigh(hp1_, 0.0068027, snd);
 
-        double knobRezo = pre_knobRezo + (tempAccentEnv_ * 0.04) * knobAccent;
+        double knobRezo = K.preRezo + (tempAccentEnv_ * 0.04) * K.accent;
         if (boxSndType_ == 0) knobRezo *= 1.1;
 
         snd *= boxGate_;
@@ -1026,7 +1203,7 @@ void CBEngine::process(float* out, int frames) {
                                             (long double)snd, (long double)boxOscFrq_);
 
         snd *= ((1.0 - knobRezo) * 1.5 + 1.0);
-        snd *= boxVolEnv_ * (tempAccentEnv_ * 5.0 + 1.0) * knobVolume;
+        snd *= boxVolEnv_ * (tempAccentEnv_ * 5.0 + 1.0) * K.volume;
 
         // Type 0 keeps the exact 2004 call, untouched, so the default sound
         // is bit-identical to the engine before the pedal models existed.
@@ -1054,18 +1231,22 @@ void CBEngine::process(float* out, int frames) {
         if (running && samplesIntoStep_ >= samplesPerStep_) {
             bNoteSlide_ = bSlideNext_;
             if (bNoteSlide_) {
-                double eNext;
-                if (currentStep_ < pat->lastStep) {
-                    eNext = noteFreq(pat->steps[currentStep_ + 1].pitch);
-                } else {
-                    // slide into first step of next pattern in the order
-                    int peekIdx = (patIdx + 1) % (int)pats.size();
-                    eNext = noteFreq(pats[peekIdx].steps[0].pitch);
-                }
-                double tuned_curr = std::pow(2.0, std::log2(std::max(1e-6, boxOscFrq_)) + knobTune);
-                double tuned_next = std::pow(2.0, std::log2(std::max(1e-6, eNext))     + knobTune);
+                // Target and duration both come from the step that will
+                // actually play next - across the bar line that is step 0 of
+                // the next pattern (or of this one, when looping it), and its
+                // length is that pattern's step length, which differs when one
+                // of the two is in triplet feel.
+                int nextPat, nextStep;
+                nextPlayedStep(pats, fullSeq, patIdx, currentStep_, nextPat, nextStep);
+                const CbPattern& np = patAt(nextPat);
+                const double eNext = noteFreq(np.steps[nextStep].pitch);
+                const int nextLen = stepLenFrom(
+                    exactStepSamples(sampleRate_, fTempo, np.triplet),
+                    stepCarry(stepExact, stepFrac_, samplesPerStep_));
+                double tuned_curr = std::pow(2.0, std::log2(std::max(1e-6, boxOscFrq_)) + K.tune);
+                double tuned_next = std::pow(2.0, std::log2(std::max(1e-6, eNext))     + K.tune);
                 if (tuned_curr > 0.0)
-                    boxSlide_ = std::exp(std::log(tuned_next / tuned_curr) / samplesPerStep_);
+                    boxSlide_ = std::exp(std::log(tuned_next / tuned_curr) / nextLen);
                 else
                     boxSlide_ = 1.0;
             } else {
@@ -1077,6 +1258,4 @@ void CBEngine::process(float* out, int frames) {
         out[i * 2 + 0] = s;
         out[i * 2 + 1] = s;
     }
-
-    (void)fVolume;  // used indirectly through knobVolume already
 }

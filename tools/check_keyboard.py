@@ -22,7 +22,10 @@ at some point:
      printed beside it and F1 documents it, and pressing it does nothing at
      all. (Copy / Cut / Paste pattern, all three, from the beginning.)
 
-Checks 1-5 all ask whether a keystroke ARRIVES. Check 6 is the one that asks
+  7. Two controls in one DIALOG with the same mnemonic - case 3 again, inside a
+     modal dialog the other checks never looked at. (The sweep editor had two.)
+
+Checks 1-5 and 7 all ask whether a keystroke ARRIVES. Check 6 is the one that asks
 whether anything is waiting for it when it does, which is why the first five
 passed for as long as they did while three menu items were dead.
 
@@ -173,6 +176,29 @@ check(not dead,
       "every menu item and accelerator reaches a handler (%d commands)"
       % len(menu_ids | accel_ids),
       ("no case in the WM_COMMAND switch for: " + ", ".join(dead)) if dead else "")
+
+# ------------------------------------------------------- dialog mnemonics
+# Every modal dialog is its own namespace, and the same collision as check 3
+# happens inside one: Win32 cycles focus between the matches. The checks above
+# only ever looked at the main window, which is how the sweep editor shipped
+# with two collisions (Alt+N on "Sweep number" / "End pattern", Alt+T on "Start
+# step" / "Paste") while this script said KEYBOARD OK. Modal dialogs have no
+# menu bar and no accelerator table, so uniqueness is the whole rule.
+dialog_dupes = []
+dialogs = re.findall(r"^(\w+)\s+DIALOGEX\b.*?^BEGIN(.*?)^END", rc, re.S | re.M)
+for name, dbody in dialogs:
+    letters = {}
+    # Comments are not controls; the resource script explains its letter
+    # choices in them, quoting the labels it is steering around.
+    for label in re.findall(r'"((?:[^"]|"")*)"', re.sub(r"//.*", "", dbody)):
+        for k in re.finditer(r"&([A-Za-z])", label.replace("&&", "")):
+            letters.setdefault(k.group(1).upper(), []).append(label)
+    for k, labels in letters.items():
+        if len(labels) > 1:
+            dialog_dupes.append("%s: Alt+%s -> %s" % (name, k, " | ".join(labels)))
+check(not dialog_dupes,
+      "every dialog's mnemonics are unique within that dialog (%d dialogs)" % len(dialogs),
+      "; ".join(dialog_dupes))
 
 print()
 print("  in use:", " ".join("Alt+" + k for k in sorted(mnemonics)))
