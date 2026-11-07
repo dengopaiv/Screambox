@@ -18,7 +18,7 @@ the 2026-11-06 source study ~~L~~, ~~M~~, ~~N~~, ~~O~~, ~~P~~, ~~Q~~, ~~R~~, ~~S
 **Nothing is open in code.** What remains is listening and screen-reader checks, at the
 bottom of this file — the 2026-11-06 round added to that list.
 
-**Released as 1.0.0 on 2026-11-07**, after testers reported the 2026-11-06 test build
+**Released as 2.0.0 on 2026-11-07** (1.0.0 was Creakbox, 2026-10-03), after testers reported the 2026-11-06 test build
 working. That report was general ("things are working"), not item by item, so the list at
 the bottom stays as it is: anything on it that someone has specifically heard or checked can
 be struck off when they say so.

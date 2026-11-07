@@ -20,9 +20,10 @@ purpose; the About box says so, and so does this file. The file formats keep the
 `CreakboxRoq` / `CreakboxHape` headers, so songs and sweep files saved under the old name
 open unchanged.
 
-**Version 1.0.0, 7 November 2026** - the first full release, after a tested build of
-6 November. The number lives in `src/version.h`, which feeds both the exe's file properties
-and the About box.
+**Version 2.0.0, 7 November 2026** - the first release as Screambox, after a tested build
+of 6 November. 1.0.0 was released as Creakbox on 3 October 2026; the numbering carries on
+across the rename. The number lives in `src/version.h`, which feeds both the exe's file
+properties and the About box.
 
 ---
 
