@@ -22,8 +22,13 @@ If configure fails complaining about a `CMakeSystem.cmake.in` under a CMake vers
 is no longer installed, delete `build/CMakeCache.txt` and `build/CMakeFiles/` and
 reconfigure. Leave the rest of `build/` alone — it holds `Release/`.
 
-The release package lives in `dist/` (ignored by git): the exe, `README.md`, `TESTING.txt`,
-`LICENSE.txt`, `license-bmd.txt` and `creakbox.txt`. The `modules/` presets are not shipped.
+The release package lives in `dist/` (ignored by git): the exe, `README.md`,
+`RELEASE-NOTES.txt` (`TESTING.txt` in a test build), `LICENSE.txt`, `license-bmd.txt` and
+`creakbox.txt`. The `modules/` presets are not shipped.
+
+The program version is `src/version.h` and nowhere else - `resource.rc` and the About box
+both read it. It is unrelated to the `.roq` / `.hape` format versions; a release never bumps
+those, and a format change never needs a release number to justify it.
 
 ## What is compiled and what is not
 

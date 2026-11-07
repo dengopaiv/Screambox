@@ -43,6 +43,7 @@ set(SCREAMBOX_HEADERS
     src/dist.h
     src/freq.h
     src/core.h
+    src/version.h
 )
 
 add_executable(Screambox WIN32

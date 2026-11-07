@@ -4,6 +4,7 @@
 #include "CbPresetIO.h"
 #include "RoqIO.h"
 #include "resource.h"
+#include "version.h"
 
 #ifdef max
 #undef max
@@ -2453,7 +2454,7 @@ void MainWindow::showAbout() {
         // envelope, accent - is the original CreakBox code, kept bit-identical
         // on purpose, and the name changed so that nobody mistakes this program
         // for that one, not to take credit for it.
-        L"Screambox\r\n"
+        L"Screambox " SCREAMBOX_VER_WSTR L"\r\n"
         L"Accessible bassline synth and step sequencer for Windows.\r\n\r\n"
         L"Built on CreakBox by Frank Reitz (Bass Assessor), 2002, and its 2004 VST\r\n"
         L"source, published by bioroid media development under a BSD-style licence\r\n"
