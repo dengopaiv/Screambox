@@ -15,16 +15,14 @@ step, and the documentation plus keyboard rework — are done and verified.
 the 2026-11-06 source study ~~L~~, ~~M~~, ~~N~~, ~~O~~, ~~P~~, ~~Q~~, ~~R~~, ~~S~~, ~~T~~,
 ~~U~~, ~~V~~, ~~W~~ — every decision in those is Dengo's, taken after the study.
 
-**Nothing is open in code.** What remains is listening and screen-reader checks, at the
-bottom of this file — the 2026-11-06 round added to that list.
+**Nothing is open.** Not in code, and not by ear either: the listening and screen-reader
+list at the bottom of this file was closed on 2026-11-07, checked by sheer use rather than
+item by item — Dengo and the testers have made enough patterns that every feature on it has
+been played and heard. See "Checked by use" below for what that means for the open
+questions it held.
 
-**Released as 2.0.0 on 2026-11-07** (1.0.0 was Creakbox, 2026-10-03), after testers reported the 2026-11-06 test build
-working. That report was general ("things are working"), not item by item, so the list at
-the bottom stays as it is: anything on it that someone has specifically heard or checked can
-be struck off when they say so.
-
-The honest gap is that **almost none of the done work has been heard** — only the resonance
-boost and the PWM LFO have been confirmed by ear. That list is at the bottom of this file.
+**Released as 2.0.0 on 2026-11-07** (1.0.0 was Creakbox, 2026-10-03), after testers
+reported the 2026-11-06 test build working.
 
 ---
 
@@ -1031,10 +1029,23 @@ failure classes rather than four.
 
 ---
 
-## Needs a human — cannot be checked headlessly
+## Checked by use — CLOSED 2026-11-07
 
-Every engine claim in rounds 1–3 is verified numerically. None of it has been verified by
-ear or with an actual screen reader.
+(Was "Needs a human — cannot be checked headlessly".) Every engine claim here was verified
+numerically when it was built. The by-ear and screen-reader half is now done too, though not
+as a checklist: by 2026-11-07 Dengo and the testers had made so many patterns that
+everything below had been exercised in ordinary use, and nothing on it was reported wrong.
+
+**What that settles for the open questions below:** each one is closed as *keep it as
+built*. Three-key chords for the per-step toggles, the ×4/3 triplet, Screamer's 0.3× level,
+the per-note ring restart and the 64-entry length combo were all used without complaint, and
+"nobody asked for it to change" is the answer each question was waiting for. If any of them
+does come up later, the reasoning for the alternative is still written down in its entry.
+
+**One thing to keep watching:** the Cutoff sweep that once sounded flat within each pattern
+was never reproduced. If it happens again, save the `.roq` straight away.
+
+The entries are kept as they were written, for the reasoning in them.
 
 - **Copy / Cut / Paste pattern — implemented 2026-09-05, reported dead by Dengo.** They had
   never been implemented: menu items, accelerators and an F1 entry all existed, and no `case`
