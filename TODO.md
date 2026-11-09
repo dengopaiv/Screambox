@@ -65,10 +65,11 @@ through the question dialog:
   sliders leave the Oscillator dialog. **Phase comes from the song position**, so every
   play and every export is identical. **BUILT 2026-11-09 on `rework`, needs ears** - see
   *Y3, as built* below.
-- **Y4: the whole program in C**, not only the engine. **C23 on clang-cl** (decided
-  2026-11-09 after the full test: clang-cl passed it byte for byte, and MSVC's C compiler
-  lacks C23's `constexpr`, `bool`/`true` and `nullptr`). **Sample-exact is the acceptance
-  criterion.** PLANNED - see *Y4 plan* - not started.
+- **Y4: the whole program in C**, not only the engine. **C17** (Dengo, 2026-11-09 - it is
+  what his other projects use; C23's gains here are cosmetic. The plan below was first
+  written for C23 on clang-cl). **Sample-exact is the acceptance criterion.** PLANNED - see
+  *Y4 plan* - not started, and **the scope is under reconsideration**: see *Y4, the
+  calculus*.
 - **Order:** the tester first (BUILT, see Y4), then the oscillating sweeps in C++, then the
   C port against frozen reference renders.
 
@@ -428,7 +429,26 @@ proven byte-exact before the UI moves at all.
 - `sb_engine_load_song()` repeats what `MainWindow::loadRoqFile()` does to the engine. If
   Open starts doing more, the shim has to follow.
 
-## Y4 plan (written 2026-11-09; Dengo chose C23 on clang-cl)
+## Y4, the calculus (2026-11-09)
+
+Dengo asked what the port actually buys. Measured, one core, file work included: a plain
+song renders about 290 times faster than real time, the everything-on patch about 185
+times, and every slider gliding at once (the new per-sample path) about 57 times - under
+2 % of a core. **A C port would not be faster**: the per-sample code is already C in all
+but name, and the same optimiser produces the same machine code. What it would buy:
+explicitness, a C interface (a plugin is not a goal), and one language with Dengo's other
+work - which matters little, since Claude writes the code either way. What it costs:
+weeks without an audible change, a freeze on features, and the 3,500-line interface - the
+accessibility work - rewritten with only checks and a screen reader to catch regressions.
+**Recommendation: do not port**; keep the C++, keep the tester (it protects C++ changes
+just as well), keep the plan below on file. If the port is ever wanted, the engine and
+files alone (phases 0-2) are the low-risk part. Awaiting Dengo's decision.
+
+## Y4 plan (written 2026-11-09 for C23 on clang-cl; the standard is now C17)
+
+**C17 changes phase 0:** no compiler switch is needed - Microsoft's C compiler does C17,
+with `/experimental:c11atomics` for `<stdatomic.h>` (clang-cl remains an option, proven
+byte-exact). Read "C23" below as C17: nothing in the plan depends on a C23 feature.
 
 **The rule for every phase:** the sound and the files do not change. `check_sound.py` passes
 all of its renders (201 when this was written) against a manifest frozen before the port
