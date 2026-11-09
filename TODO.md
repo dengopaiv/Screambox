@@ -220,8 +220,11 @@ while the song plays; Cancel still undoes it. With no sweep in the list it only 
 list, so Remove-then-Apply goes quiet instead of re-adding the fields. Cycles moved from
 Alt+Y to Alt+X for it. Driven in the app: Apply reaches the engine (the main window's label
 changes with the editor open), Add alone does not, Cancel takes it back out.
-**Not done:** F5-F8 do not reach the main window while the editor is open (it is modal), so
-playback has to be started before opening it.
+F5-F8 inside the dialogs (Dengo, same day): a modal dialog runs its own loop, so the main
+window's accelerators never saw them. A WH_MSGFILTER hook (`dialogKeyHook`) passes them to
+the main window from our own four dialogs only - recognised by dialog procedure, so the file
+dialogs keep F5 as Refresh - skips auto-repeat, and copies the main window's status text
+into the dialog's status line so a screen reader there hears it.
 
 **What changed where:**
 - Engine: `SweepOsc` on `ParamSweep`; `evaluateSweeps` chooses the straight and the

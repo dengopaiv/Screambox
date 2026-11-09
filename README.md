@@ -287,8 +287,10 @@ How they behave, precisely:
 new one. A sweep whose end is before its start is refused with a reason (it could never
 play), as is one that overlaps another on the same slider. **Apply** (`Alt+Y`) lets you
 hear a change without closing: the sweep shown takes what the fields say, as Update does,
-and the slider's sweeps go to the engine at once - start the song playing first, since the
-transport keys do not reach the main window while the editor is open. **Cancel** really
+and the slider's sweeps go to the engine at once. **F5-F8 work inside the editor** - and in
+the Oscillator, Acid FX and Modulation dialogs - exactly as on the main window, so the song
+can be started, looped and stopped without leaving it; the editor's status line says what
+the transport did. (The Open and Save file dialogs keep F5 as their Refresh.) **Cancel** really
 cancels: every change made since the dialog opened is undone, applied or not. A new sweep starts at the slider's
 current setting at both ends. The value sliders move like the slider they stand for -
 cents for Duplet detune, the dialogs' exponential tapers for the two frequencies, 0-200 %

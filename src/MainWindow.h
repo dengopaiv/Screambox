@@ -95,6 +95,13 @@ private:
     HINSTANCE hInst_ = nullptr;
     HWND hwnd_ = nullptr;
     HACCEL accel_ = nullptr;
+    // The transport keys (F5-F8) inside this program's own modal dialogs. A
+    // modal dialog runs its own message loop, so the accelerators above never
+    // see a key pressed there; this message-filter hook hands F5-F8 to the
+    // main window instead. See dialogKeyHook in MainWindow.cpp.
+    HHOOK dialogHook_ = nullptr;
+    static MainWindow* hookSelf_;
+    static LRESULT CALLBACK dialogKeyHook(int code, WPARAM wp, LPARAM lp);
 
     // Named child windows
     HWND hWaveform_ = nullptr;

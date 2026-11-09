@@ -211,7 +211,72 @@ bool MainWindow::create() {
         WS_OVERLAPPEDWINDOW | WS_VISIBLE,
         CW_USEDEFAULT, CW_USEDEFAULT, 780, 672,
         nullptr, menu, hInst_, this);
-    return h != nullptr;
+    if (!h) return false;
+    // This thread only: the dialogs are all modal on the UI thread.
+    hookSelf_   = this;
+    dialogHook_ = SetWindowsHookExW(WH_MSGFILTER, &MainWindow::dialogKeyHook,
+                                    nullptr, GetCurrentThreadId());
+    return true;
+}
+
+MainWindow* MainWindow::hookSelf_ = nullptr;
+
+// F5-F8 inside this program's dialogs. Without this the sweep editor's Apply
+// could only be heard if the song was started BEFORE the editor opened: a
+// modal dialog runs its own message loop, TranslateAccelerator is never
+// called for it, and the keys did nothing at all there.
+//
+// Only in OUR dialogs, recognised by their dialog procedure. The Open and Save
+// file dialogs run through the same kind of loop, and in them F5 is the
+// Explorer view's Refresh - taking it there would break a key someone knows.
+// The keys are free in our dialogs: no standard control uses F5-F8 (F4 opens
+// a combobox, which is why the transport never lived there).
+//
+// The main window says what happened in its status bar, which a screen reader
+// in the dialog does not hear, so the text is copied into the dialog's own
+// status line where it has one. Where it has none (Oscillator, Acid FX) the
+// sound starting or stopping is the answer.
+LRESULT CALLBACK MainWindow::dialogKeyHook(int code, WPARAM wp, LPARAM lp) {
+    MainWindow* self = hookSelf_;
+    if (code == MSGF_DIALOGBOX && self) {
+        const MSG* m = reinterpret_cast<const MSG*>(lp);
+        // Bit 30: the key was already down - an auto-repeat, which would
+        // restart the song over and over while F5 is held.
+        const bool fresh = m->message == WM_KEYDOWN && !(m->lParam & (1L << 30));
+        const bool plain = !(GetKeyState(VK_CONTROL) & 0x8000) && !(GetKeyState(VK_SHIFT) & 0x8000)
+                        && !(GetKeyState(VK_MENU) & 0x8000);
+        int cmd = 0;
+        if (fresh && plain) {
+            switch (m->wParam) {
+                case VK_F5: cmd = IDM_TRANSPORT_PLAY_SONG;     break;
+                case VK_F6: cmd = IDM_TRANSPORT_PLAY_CURRENT;  break;
+                case VK_F7: cmd = IDM_TRANSPORT_PLAY_SEQUENCE; break;
+                case VK_F8: cmd = IDM_TRANSPORT_STOP;          break;
+                default: break;
+            }
+        }
+        if (cmd) {
+            HWND root = GetAncestor(m->hwnd, GA_ROOT);
+            const DLGPROC proc = root ? reinterpret_cast<DLGPROC>(GetWindowLongPtrW(root, DWLP_DLGPROC))
+                                      : nullptr;
+            int statusId = -1;   // -1: not one of ours
+            if      (proc == &MainWindow::sweepEditorProc) statusId = IDC_SWEEP_STATUS;
+            else if (proc == &MainWindow::modDialogProc)   statusId = IDC_MOD_STATUS;
+            else if (proc == &MainWindow::oscDialogProc
+                  || proc == &MainWindow::distDialogProc)  statusId = 0;
+            if (statusId >= 0) {
+                SendMessageW(self->hwnd_, WM_COMMAND, cmd, 0);
+                if (HWND st = statusId ? GetDlgItem(root, statusId) : nullptr) {
+                    wchar_t said[256]{};
+                    GetWindowTextW(self->hStatus_, said, 256);
+                    SetWindowTextW(st, said);
+                    NotifyWinEvent(EVENT_OBJECT_NAMECHANGE, st, OBJID_CLIENT, CHILDID_SELF);
+                }
+                return TRUE;   // handled: the dialog does not see the key
+            }
+        }
+    }
+    return CallNextHookEx(nullptr, code, wp, lp);
 }
 
 void MainWindow::buildLayout() {
@@ -1106,7 +1171,7 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                 // The two-line status area holds about 170 characters.
                 const wchar_t* tail = engine_.isRunning()
                     ? L"Cancel still undoes it all."
-                    : L"Nothing is playing, though: start playback before opening the editor.";
+                    : L"Nothing is playing: F5 plays the song, F6 this pattern, here as on the main window.";
                 if (any && list.size() == 1)
                     swprintf(m, 256, L"Applied: sweep 1 updated, and it is what you hear now. %s", tail);
                 else if (any)
@@ -3051,6 +3116,7 @@ void MainWindow::showKeyboardReference() {
         L"   F6: Play current pattern, looped\r\n"
         L"   F7: Play from current pattern to the end\r\n"
         L"   F8: Stop\r\n"
+        L"   These four work inside the sweep editor and the other dialogs too.\r\n"
         L"\r\nGlobal:\r\n"
         L"   Ctrl+O: Open .roq song\r\n"
         L"   Ctrl+S: Save .roq song\r\n"
@@ -3252,7 +3318,11 @@ LRESULT MainWindow::proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         // WM_NOTIFY handling for the old ListView step editor was removed
         // when the inline per-step controls replaced it.
-        case WM_DESTROY: PostQuitMessage(0); return 0;
+        case WM_DESTROY:
+            if (dialogHook_) { UnhookWindowsHookEx(dialogHook_); dialogHook_ = nullptr; }
+            hookSelf_ = nullptr;
+            PostQuitMessage(0);
+            return 0;
         default: break;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
