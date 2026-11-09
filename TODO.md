@@ -55,6 +55,255 @@ is read); the shapes by ear, especially Up and down on Ring frequency and on PWM
 
 ---
 
+# Y. Study 2026-11-09: sweep coverage, accent squelch, LFO as sweep, C rewrite
+
+Dengo's four points. 1 and 2 are answered and measured. 3 and 4 were studied, then decided
+through the question dialog:
+
+- **Y3: oscillating sweeps**, as proposed below: evaluated at sample rate for PWM and the
+  cheap targets and at step rate for the rest. The PWM LFO converts into them, and its
+  sliders leave the Oscillator dialog. **Phase comes from the song position**, so every
+  play and every export is identical. NOT BUILT.
+- **Y4: the whole program in C**, not only the engine. C17 or C23 to be chosen by the full
+  sample-exact test. **Sample-exact is the acceptance criterion.** NOT STARTED.
+- **Order:** the tester first (BUILT, see Y4), then the oscillating sweeps in C++, then the
+  C port against frozen reference renders.
+
+## Y1. Which parameters have sweeps: all of the requested ones, as of X
+
+Every parameter on the list is a sweep target in X, which is uncommitted and unreleased:
+Volume, Cutoff, Resonance, EnvMod, Decay, Accent and Tuning (0-6); PWM (8); Duplet PWM,
+called "pwm2" (11); Sub level (9); Duplet detune, called "osc2 tune" (12); Duplet level (13);
+Noise (10); Dist gain, tone and level (17-19); Ring frequency and amount (22, 23). X also
+added Accent squelch (7), the three PWM LFO controls (14-16) and the compressor's threshold
+and depth (20, 21). Nothing is missing.
+
+## Y2. Accent squelch: unchanged, measured
+
+**The engine is unchanged.** I built one harness source against three engines: the initial
+commit `77a6309`, 2.0.0 (`HEAD`) and the working tree. All 30 renders are byte-identical
+across all three: squelch 0 / 0.5 / 1 / 1.37 / 2, three accent patterns (runs of three,
+alternating, every step) and both a plain patch and one with the oscillator extras and
+distortion on. The renders avoid the things that legitimately changed: 44.1 kHz, 16-step
+patterns, no slide on a last step and no pitch 52. Squelch is clearly audible in them: the
+RMS difference from squelch 1 is 0.05-0.09. The only engine edit in all that history is
+the read itself, `params_` changed to `effParam()`, which returns the same value when no
+sweep is running.
+
+**What did change is the slider, in W (2.0.0).** In Creakbox 1.0 the slider ran 0-100 % and
+meant squelch 1.0-2.0, so stock was "0 %". Since 2.0.0 it runs 0-200 % and the position is
+the squelch value times 100, so stock reads "100 %". The range 0-99 % is new territory below
+stock, and at 0 an accent gives no filter wah at all. Files store the real value, so no saved
+song moved, but a setting remembered as "50 %" is now found at 150 %.
+
+**How a squelch sweep acts:** squelch is read only when an accented step triggers
+(`boxAccentFrq_ = (tempAccentFrq_ + 2) * sq`), so a sweep on it changes accent to accent and
+never moves within a note.
+
+## Y3. Folding the PWM LFO into sweeps: study
+
+**What exists.**
+- **Sweeps** have a start and end at song positions (pattern and step) and draw a straight
+  line between them, linear or geometric. They can hold their end value, and they are
+  evaluated **once per step** (invariant 6). X's shapes generate ordinary sweeps that
+  follow the shape step by step.
+- **The PWM LFO** is a triangle evaluated **every sample**. It has one rate in Hz and two
+  depths (main and duplet PWM), its result is clamped at the rails, and its phase is shared
+  and free-running.
+
+**Three facts that shape the design.**
+1. **The step-rate ceiling.** At 140 BPM there are 9.3 steps a second, and a cycle needs at
+   least 2 steps, so a step-evaluated sweep tops out near **4.7 Hz**, in stairs. The PWM LFO
+   goes to 100 Hz. Folding the LFO into sweeps therefore requires a sweep that can be
+   evaluated faster than once per step. That means amending invariant 6, and it is the
+   real decision here; everything else follows from it.
+2. **The LFO's phase is never reset, not even when you press Play.** `pwmLfoPhase_` has no
+   reset anywhere. Each play of a song therefore catches it at a different point, and a WAV
+   export, which uses a fresh engine, starts it at 0, which is not what you heard. If an
+   LFO sweep takes its phase from the song position, every play is identical and the export
+   matches the playback. Invariant 1 forbids a reset *per pattern*, and that stays
+   forbidden: the phase would run continuously from the start of the sweep.
+3. **Targets 14-16 (the LFO's rate and depths) are unreleased.** If the LFO goes, they can be
+   dropped before X ships at no compatibility cost. Once a release has shipped, those
+   numbers are permanent.
+
+**Proposed model: an oscillating sweep.** A sweep gains optional fields:
+- shape: none, triangle, sine, square, saw up or saw down;
+- rate: either *steps per cycle* (locked to tempo) or *Hz* (independent of tempo);
+- depth: in the target's real units, plus or minus;
+- start phase.
+
+The sweep's existing start-to-end line stays as the **centre**, so a sweep can ramp and
+wobble at the same time, and Hold applies to the centre. Shape *none* is exactly today's
+sweep. An LFO is simply an oscillating sweep that covers the whole song. It needs a
+"to the end of the song" endpoint so that adding patterns does not leave it short.
+
+**Evaluation rate, by target class.**
+- **a. Step rate, every target.** The oscillation is sampled once per step, as X's shapes are
+  now, but it is stored as one editable record instead of many generated pieces, so its rate
+  and depth can be changed afterwards. This changes only `evaluateSweeps`, not the sample
+  loop.
+- **b. Sample rate, for targets that are cheap per sample.** PWM and Duplet PWM already do this
+  work, so they cost nothing new. Volume, sub, noise, duplet level and ring amount are nearly
+  free. Tuning costs one `pow` per sample, which gives vibrato. The phase comes from the
+  absolute sample position since the sweep started, so the result does not depend on the
+  block size, and the 32/64/512/1024 test applies unchanged.
+- **c. Control rate (every 32 samples) for the expensive targets.** These are cutoff,
+  resonance and the dist/comp/ring coefficients, all of which are re-derived through `pow`
+  and `prepare`. The 32-sample grid must be counted from the step start, not from the
+  block. This class could be deferred.
+
+Off-path rule (invariants 4 and 5): with no oscillating sweep, the sample loop is
+byte-identical and pays only one branch.
+
+**Moving the PWM LFO.** The three LFO sliders leave the Oscillator dialog. The `.roq` header
+keeps their three fields, because the header is positional, and they are written as 0. On
+load, a non-zero LFO converts to oscillating sweeps on targets 8 and 11: triangle, Hz, the
+same depth, covering the whole song. That conversion is **provably bit-identical in a fresh
+engine** (the export case) if the sample-rate path keeps today's expressions: the
+increment `rate / sr` is accumulated, then the triangle formula, then the clamp. Playback
+in the app changes on purpose, as described in fact 2. Two consequences:
+- A song that used the LFO re-saves as v15 and no longer opens in 2.0.0.
+- Darkside's feature moves out of the Oscillator dialog, so tell him.
+
+**Format.** The oscillation goes on the sweep line as appended tokens, using the step-line
+trick. But an older build would ignore those tokens and play a plain ramp without saying
+so. So `neededVersion` must force **v15** whenever any sweep oscillates, for the same
+reason as v14. `.hape` follows the same content rule.
+
+**The sub-editor Dengo described.** A dialog next to Oscillator and Acid FX, called
+"Sweeps" or "Modulation":
+- A listbox of all the targets, each read with its count, for example
+  `Cutoff (2 sweeps, 1 LFO)`.
+- Enter opens that target's sweep editor, as Enter on its slider does.
+- "Add LFO..." creates a whole-song oscillating sweep, with a choice of shape, rate and
+  depth.
+- "Apply preset..." applies a saved shape.
+- The sweep editor itself gains the shape, rate and depth fields, so an LFO appears in the
+  parameter's own sweep list and is edited there.
+
+All of these are standard controls with labels, so the accessibility rule holds. The
+dialog's mnemonics are its own, not the main window's.
+
+**Open questions:**
+- Which targets get sample rate (b), and whether c is wanted at all.
+- What a preset stores: a shape, rate and depth relative to the range (proposed), or
+  absolute sweeps like a `.hape`.
+- Whether the "Hz" rate is needed at all. Steps per cycle is the musical unit, but the
+  converted PWM LFO needs Hz.
+
+## Y4. Rewriting in C17 or C23: study
+
+**Size.** About 7000 compiled lines. The 2004 reference sources are not built. The
+original DSP (`IIR`, `dist`, `freq`) is already C-style. The C++ features in use: `std::vector`
+55 uses, `std::string`/`wstring` 72, `std::atomic` 14, mutex/locks 11, `std::thread` 2,
+lambdas 14, classes 25, `try`/`catch`/`throw` 14, streams 14 (in `RoqIO`), `std::optional` 6,
+and one template.
+
+**Toolchain, measured on this machine** with VS 2026 (MSVC 19.51) and clang-cl 22:
+- **C17 on MSVC works.** `<stdatomic.h>` works, and lock-free `_Atomic float` is fine, but it
+  still needs `/experimental:c11atomics`. `<threads.h>` works.
+- **C23 on MSVC is partial.** With `/std:clatest`, `typeof`, `[[nodiscard]]`, `static_assert`
+  and binary literals compile. **`constexpr`, `bool`/`true` as keywords, `nullptr` and
+  `<stdbit.h>` do not.**
+- **clang-cl 22**, already installed as a VS component, compiles full C23 (`-T ClangCL`).
+  "C23" therefore means changing the compiler, and that change needs its own byte-exact proof
+  of the floating-point output.
+
+**The sample-exact tester: BUILT 2026-11-09.** Sample-exact is the acceptance criterion
+(Dengo), so the tester came first. Run it with `python tools/check_sound.py`. It is made of
+three pieces:
+- `tests/sb_api.h`: a C17 interface to the engine and the file code.
+- `tests/sb_api_cpp.cpp`: implements that interface over the current C++ sources.
+- `tests/render.c`: the render driver, in C and talking only to that header, so the C port
+  links the same driver unchanged.
+
+It renders 78 built-in cases:
+- every main slider at its extremes;
+- squelch 0 and 2;
+- reverse steps, including one across a tie;
+- slides on the last step, both in sequence and looping;
+- triplet and mixed lengths (4 / 12t / 16 / 23), and a 64-step pattern;
+- every pitch;
+- resonance boost, PWM, sub, duplet, noise, and the PWM LFO at three rates;
+- all five distortion types, the compressor and the ring modulator;
+- everything on at once at 22.05, 44.1, 48 and 96 kHz;
+- tempos 60, 300 and 133.7;
+- a ramp on each of the 24 sweep targets, plus hold, missing-pattern and mixed-length
+  sweeps.
+
+It also renders every module under `modules/` when that folder is present: 111 files on
+this machine.
+
+For each render it checks:
+- the 512-frame render's hash against `tests/golden/sound.manifest`;
+- that renders at 32, 64 and 1024 frames are identical to the 512-frame one;
+- that the case's `.roq` read back renders the same, and that `.roq` and `.hape` re-save
+  to the same bytes;
+- that the `.roq` / `.hape` bytes themselves match the manifest, which pins the version
+  stamping;
+- zero allocations in `process()`;
+- that `dist_classic` renders the same as `stock`, because Classic ignores gain, tone and
+  level.
+
+On a mismatch it re-runs the reference driver that `--update` kept in `build/sound/` and
+names the first differing sample as a time, a pattern and a step.
+
+**Proven to catch a change:** changing one engine constant, `2.0 / 4500.0` to `2.0 / 4501.0`
+in the accent decay (largest effect 0.0007), fails 141 of 189 renders. Each is located
+12-27 samples into pattern 1, step 1, the first accented note. The renders it leaves alone
+are the songs without accents. The first version of the script compared the manifest with
+itself and passed this mutant; that is how the bug was found.
+
+**Old module files re-save differently, and that is correct:** all 29 modules at format v1-v6
+come out different, because the writer never writes below v9. Every v9 and v11 module
+re-saves byte-identically. The manifest records the outcome per file, so only a *change* in
+it fails.
+
+**The compiler question is answered: clang-cl 22.1.3 passes 189/189**, every render and
+every saved file byte-identical to the MSVC build. **C23 under clang-cl does not cost
+sample-exactness.** C17 on MSVC remains possible too, with its experimental atomics switch.
+
+The manifest was accepted from `d8882eb` plus the uncommitted round X. Commit X, then the
+tester, so that the manifest names a real commit.
+
+**What translates easily.** The Win32 UI is a C API already, and the accessibility strategy
+is unaffected because the controls are the same. WASAPI and `IMMNotificationClient` work
+from C through `COBJMACROS` and about 100 lines of hand-written vtable. The bit-exact
+harness method proves an engine port directly, by rendering the C engine against the C++
+engine.
+
+**What is hard or risky.**
+- Math overloads: `std::pow(float, float)` is not C's `pow`. Every call has to be checked
+  and given the right `powf` or `pow`, or the output bits change.
+- `RoqIO`'s stream formatting has to be reproduced byte for byte, or saved files change.
+  The 34-module round trip covers that.
+- `SongData`'s vectors become fixed-capacity arrays. This is a gain: invariant 3 (no
+  allocation on the audio thread) becomes structural.
+- `MainWindow` (3000 lines) is the risk. Nothing catches a UI regression except
+  `check_keyboard.py` and testing by hand with a screen reader.
+
+**What it buys.** Nothing audible: the sound is identical by construction. What it does buy
+is an engine with a plain C ABI. **CLAP is a C plugin API**, so a C engine is the direct
+path to a plugin, as well as to other hosts and other languages.
+
+**Recommendation at study time** (superseded by Dengo's decision to port the whole
+program): port only the engine to C17 on MSVC behind a C header. The engine-first order still
+holds inside the whole-program port: `tests/sb_api.h` is that header, and the engine can be
+proven byte-exact before the UI moves at all.
+
+**Notes for the port.**
+- `dist.cpp` keeps its state in globals, and `CBEngine::resetFilters()` calls
+  `dist_initdist()`. Two engines in one process, such as the WAV export running while the
+  app plays, share that state today.
+- The random-pattern generator is `std::mt19937` with `<random>` distributions and a time
+  seed. Its exact sequence is not reproducible today, so a C port needs to keep only its
+  probabilities, not its bits.
+- `sb_engine_load_song()` repeats what `MainWindow::loadRoqFile()` does to the engine. If
+  Open starts doing more, the shim has to follow.
+
+---
+
 # 2026-11-06 source study — RESOLVED 2026-11-06
 
 **How these were found.** A read of every compiled source, plus a throwaway headless probe

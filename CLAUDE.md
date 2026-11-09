@@ -246,6 +246,31 @@ shows up later as "it sounds different now" with no obvious cause.
 
 ## How engine changes get verified
 
+**First, always: `python tools/check_sound.py`.** It renders 78 built-in cases, plus every
+module under `modules/` when that folder is present, and compares them with
+`tests/golden/sound.manifest`. For each render it checks:
+- that renders at 32, 64, 512 and 1024 frames per block are identical;
+- that the song's `.roq` read back renders the same;
+- that `.roq` and `.hape` re-save to the same bytes;
+- that `process()` makes zero allocations.
+
+On a mismatch it names the first differing sample as a pattern and step. Build its driver
+with `cmake --build build --config Release --target screambox_render`.
+- **A change that should not move the sound must leave it all PASS.**
+- **A change that should move the sound** moves exactly the lines it should and no others.
+  Then run `--update` in the same commit, and say in the commit message which lines moved
+  and why. Never run `--update` to make a failure go away.
+- **Add a case to `tests/render.c` for every new feature**, with its own off-path proof (see
+  below).
+
+The driver is C and talks only to `tests/sb_api.h`, so a C port links the same driver and
+the same manifest unchanged; that is its purpose (TODO Y4). `sb_engine_load_song()` in
+`tests/sb_api_cpp.cpp` mirrors what `MainWindow::loadRoqFile()` does to the engine, so keep
+the two in step.
+
+For a new feature, the manifest proves the off path but not the feature itself. The fuller
+method below still applies to the feature:
+
 The standard here is a bit-exact comparison, and it is worth the setup:
 
 1. Reconstruct the previous engine by writing a script that *reverse-applies* your patch

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 # Screambox - formerly Creakbox, renamed 2026-11-06. Built on CreakBox (2002) by
 # Frank Reitz (Bass Assessor) and its 2004 VST source; see README "Lineage".
-project(Screambox LANGUAGES CXX)
+project(Screambox LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -69,4 +69,10 @@ if(MSVC)
     set_target_properties(Screambox PROPERTIES
         LINK_FLAGS "/MANIFESTUAC:\"level='asInvoker' uiAccess='false'\" /SUBSYSTEM:WINDOWS"
     )
+endif()
+
+# The sample-exact tester (tools/check_sound.py). Not part of the release.
+option(SCREAMBOX_TESTER "Build the screambox_render test driver" ON)
+if(SCREAMBOX_TESTER)
+    add_subdirectory(tests)
 endif()
