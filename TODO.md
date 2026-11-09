@@ -65,8 +65,10 @@ through the question dialog:
   sliders leave the Oscillator dialog. **Phase comes from the song position**, so every
   play and every export is identical. **BUILT 2026-11-09 on `rework`, needs ears** - see
   *Y3, as built* below.
-- **Y4: the whole program in C**, not only the engine. C17 or C23 to be chosen by the full
-  sample-exact test. **Sample-exact is the acceptance criterion.** NOT STARTED.
+- **Y4: the whole program in C**, not only the engine. **C23 on clang-cl** (decided
+  2026-11-09 after the full test: clang-cl passed it byte for byte, and MSVC's C compiler
+  lacks C23's `constexpr`, `bool`/`true` and `nullptr`). **Sample-exact is the acceptance
+  criterion.** PLANNED - see *Y4 plan* - not started.
 - **Order:** the tester first (BUILT, see Y4), then the oscillating sweeps in C++, then the
   C port against frozen reference renders.
 
@@ -424,6 +426,129 @@ proven byte-exact before the UI moves at all.
   probabilities, not its bits.
 - `sb_engine_load_song()` repeats what `MainWindow::loadRoqFile()` does to the engine. If
   Open starts doing more, the shim has to follow.
+
+## Y4 plan (written 2026-11-09; Dengo chose C23 on clang-cl)
+
+**The rule for every phase:** the sound and the files do not change. `check_sound.py` passes
+all of its renders (201 when this was written) against a manifest frozen before the port
+starts, with the C build as the driver - and with `--against` the C++ driver as well, so
+both disagree loudly if either drifts. No phase ends with a failing line, and **no
+`--update` happens during the port**: if the sound has to change, that is a separate
+commit on the C++ side first, accepted, and only then ported.
+
+**Order, and why.** Engine first, because the tester proves it completely. UI last,
+because nothing proves it but `check_keyboard.py`, a scripted smoke test and a person with
+a screen reader. In between, a checkpoint that can be released: the C engine inside the
+existing C++ program.
+
+### Phase 0 - preconditions (no C written yet)
+1. **Freeze the sound.** Dengo ear-tests `rework` (LFOs, Apply, the glide), it merges into
+   `main`, and the manifest header names that commit. Anything learned by ear is fixed in
+   C++ first.
+2. **Switch the whole build to clang-cl** (`cmake -S . -B build -A x64 -T ClangCL`) with no
+   code change, and require `check_sound.py` to pass unchanged. It did, 189 of 189, in the
+   study; this proves it again on today's 201 and makes it the build. README's build line
+   changes with it. One toolset for C and C++ alike: the Visual Studio generator cannot mix
+   toolsets inside one build, and mixing compilers would leave two float behaviours to prove.
+3. **Set the C standard in CMake** (`C_STANDARD 23`, `C_STANDARD_REQUIRED ON`) and check what
+   clang-cl is actually given (`/clang:-std=c23`). Check that the UCRT's `<threads.h>` and
+   `<stdatomic.h>` work under clang-cl at that standard; if `<threads.h>` does not, the
+   writer lock is a Win32 `SRWLOCK`, which is all it needs anyway.
+4. **Make the UI checks repeatable before the UI moves.** Promote this session's ctypes
+   drivers (the Modulation dialog, Add LFO, the sweep editor's LFO fields, Apply, "(new
+   sweep)", F5-F8 in dialogs, the file dialog keeping F5) into `tools/check_ui.py`, so the C
+   UI is held to what the C++ UI does. Teach `check_keyboard.py` and
+   `check_dsp_ownership.py` to read a list of source files rather than one hard-coded name.
+
+### Phase 1 - the engine in C (about 2,300 lines: CBEngine, AcidFx, Distortion, IIR, dist, freq)
+- New `src/core/` (C23): `engine.c/.h` as a struct and functions, with `sb_api.h`'s shape -
+  `tests/sb_api.h` is effectively its interface already. `IIR`, `dist` and `freq` are
+  C-style now and move nearly verbatim. **`wwelti_IIR_IIRlp3pole` stays byte for byte**
+  (invariant 2); only its file and language change.
+- **`SongData` becomes fixed-capacity arrays**, so invariant 3 (no allocation on the audio
+  thread) is structural. The capacities are product decisions, to settle at the start of
+  the phase: patterns (the reader allows 4096, the tester 256), sweeps per target, steps 64.
+  The readers must refuse a file beyond them with a reason, never truncate silently.
+- **Concurrency:** `_Atomic` for what is `std::atomic` now - `params_` (as `_Atomic float`
+  or the bits in `_Atomic uint32_t`), `liveIdx_`, `readerIdx_`, `transportReset_`,
+  `running_`, `displayStep_`, `playMode_`, `patternIdx_` - with the same memory orders, and
+  the `SongWriter` protocol unchanged. `writerMu_` becomes `mtx_t` or an `SRWLOCK`.
+- **`dist.cpp` keeps its state in globals** and `resetFilters()` calls `dist_initdist()`;
+  the WAV export's engine and the playing engine share it today. In C it becomes per-engine
+  state. Check first whether `dist_dist()` has state that reaches the output; if it does,
+  this changes the export-while-playing case only, which the tester (one engine at a time)
+  cannot see - say so in the commit.
+- **The maths audit, call by call** - the one place a port silently changes bits. Every
+  `std::pow`, `std::sin`, `std::exp`, `std::log`, `std::log2`, `std::floor`, `std::lround`,
+  `std::clamp`, `std::max/min` gets its exact C equivalent for the argument types it had:
+  `std::pow(float, float)` computes in float and is `powf`, a double pair is `pow`.
+  `long double` is 64-bit under both MSVC and clang-cl on Windows, so the `wwelti` filter's
+  `long double` stays as written. Implicit float/double promotions in mixed expressions
+  are kept exactly - a C rewrite that "tidies" `(double)` casts changes output.
+- **The lambdas in `process()`** (`voiceNow`, `knobsNow`, `posOf`, `samplesBetween`,
+  `evaluateSweeps`, `oscPhaseNow`, `glideSweeps`, `patAt`) become static functions taking
+  a small context struct. Same expressions, same order.
+- **Proof:** a C implementation of `sb_api.h`'s engine half (`tests/sb_api_c.c`) and a second
+  driver target, `screambox_render_c`, linked from the same `render.c`. `check_sound.py
+  --exe <c driver>` passes everything; `--against` the C++ driver agrees on every line.
+  The allocation check needs a C counterpart of the `operator new` hook: the C engine
+  allocates only through one `sb_alloc` function, which the test build counts.
+  `check_dsp_ownership.py` is pointed at the C engine's struct fields.
+
+### Phase 2 - the files in C (about 700 lines: RoqIO, CbPresetIO)
+- `.roq`, `.hape` and `.cb` reading and writing in C, with `neededVersion` and every
+  `if (version >= N)` block mirrored as they are.
+- **The writer's text must be the same bytes.** `ostream << float` is `%g` at precision 6;
+  the sweep line's floats already use `floatToken` (shortest round-trip by trying
+  precisions with `snprintf`), written that way for this port. The tester pins every saved
+  `.roq` and `.hape` byte for byte, and every module's re-save outcome.
+- **Paths:** the C++ code narrows wide paths and opens with `ifstream`, so a name outside
+  the ANSI code page fails today. C with `_wfopen` fixes that. It is a behaviour change
+  (for the better); decide it explicitly, not by accident.
+- **Proof:** the rest of `sb_api.h` in C; `check_sound.py` with the C driver, all of it.
+
+### Phase 3 - checkpoint: the C core in the current program
+- `MainWindow` and `AudioEngine` (still C++) call the C engine and C file code through
+  their headers. Nothing a user sees changes; everything audible and every saved byte is
+  already proven. **This is a releasable build**, and the right one to give the testers -
+  Darkside included - before the UI moves.
+- Proof: `check_sound.py`, `check_keyboard.py`, `check_ui.py`, and the program used for a
+  while.
+
+### Phase 4 - the audio device in C (about 300 lines)
+- WASAPI through `COBJMACROS`; `IMMNotificationClient` as a hand-written vtable (about 100
+  lines); the device-loss reopen of TODO V kept exactly.
+- Proof: by use - play, pull the headphones or switch the default device, the program
+  reopens and says so once. Nothing automated covers this today; note what was tried.
+
+### Phase 5 - the UI in C (about 3,500 lines; the risk)
+- `MainWindow.cpp` splits by job into C files: window layout, step editor, sweep editor,
+  Oscillator / Acid FX / Modulation dialogs, file commands and WAV export, the dialog key
+  hook. `std::wstring` and `std::vector` in the UI become fixed buffers and a few small
+  helpers; the UI thread may allocate, so this is about clarity, not real time.
+- **The accessibility rule carries over unchanged** - the same standard controls, the same
+  labels, `announceValue()`, the same mnemonics and accelerators, the same retitled labels.
+  `check_keyboard.py` must read the new files before the first of them is written.
+- **The random-pattern generator** (`std::mt19937` with `<random>` distributions, time
+  seeded) cannot be reproduced bit for bit and does not need to be: a small C generator
+  with the same probabilities per flavour. Patterns differ from the C++ build's, as they
+  differ between any two runs.
+- Proof: `check_keyboard.py`, `check_ui.py`, `check_sound.py` (the WAV export path through
+  `songLengthSamples` included), and **Dengo with a screen reader through every dialog** -
+  the one check nothing else replaces.
+
+### Phase 6 - C only
+- The C++ sources, `tests/sb_api_cpp.cpp` and the C++ driver retire; CMake becomes `C`
+  only. The 2004 reference sources are not built and stay as they are.
+- The manifest is unchanged by the whole port - that is the point of it - and its header
+  says which C commit last passed it.
+
+### Decisions to make on the way (not now)
+- The fixed capacities (phase 1).
+- Wide-character paths (phase 2).
+- Whether phase 3 ships as a numbered release.
+- Whether a plugin (CLAP is a C API) becomes a goal once the engine is C - the study's
+  "what it buys".
 
 ---
 
