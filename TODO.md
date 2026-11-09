@@ -446,6 +446,10 @@ existing C++ program.
 1. **Freeze the sound.** Dengo ear-tests `rework` (LFOs, Apply, the glide), it merges into
    `main`, and the manifest header names that commit. Anything learned by ear is fixed in
    C++ first.
+   **Then keep that C++ program as the fallback** (Dengo, 2026-11-09): tag the merged commit
+   (`cpp-final`). It is a good program with the sweeps work in it, publishable as it stands
+   if the port proves too costly or does not succeed. Until the ear test, branch
+   `sweeps-cpp-backup` holds the same work as `rework` had when this was decided.
 2. **Switch the whole build to clang-cl** (`cmake -S . -B build -A x64 -T ClangCL`) with no
    code change, and require `check_sound.py` to pass unchanged. It did, 189 of 189, in the
    study; this proves it again on today's 201 and makes it the build. README's build line
@@ -521,8 +525,8 @@ existing C++ program.
 ### Phase 3 - checkpoint: the C core in the current program
 - `MainWindow` and `AudioEngine` (still C++) call the C engine and C file code through
   their headers. Nothing a user sees changes; everything audible and every saved byte is
-  already proven. **This is a releasable build**, and the right one to give the testers -
-  Darkside included - before the UI moves.
+  already proven. **It is not released** - nothing ships until the port is done (Dengo,
+  2026-11-09) - but it is a working point to stop at, or fall back to, before the UI moves.
 - Proof: `check_sound.py`, `check_keyboard.py`, `check_ui.py`, and the program used for a
   while.
 
@@ -557,7 +561,8 @@ existing C++ program.
 ### Decisions to make on the way (not now)
 - ~~The fixed capacities~~ - decided: 4096 patterns, 100,000 sweeps (phase 1, above).
 - Wide-character paths (phase 2).
-- Whether phase 3 ships as a numbered release.
+- ~~Whether phase 3 ships~~ - decided: nothing ships until the port is done; the fallback
+  is the tagged C++ program (phase 0).
 - **Not a goal: a CLAP plugin** (Dengo, 2026-11-09).
 
 ---
