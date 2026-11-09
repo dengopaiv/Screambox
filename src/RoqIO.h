@@ -18,7 +18,8 @@
 // unknown trailing lines so older builds don't choke on new fields.
 
 struct RoqSweep {
-    int sliderIdx = 0;      // 0=Volume 1=Cutoff 2=Resonance 3=EnvMod 4=Decay 5=Accent 6=Tuning
+    int sliderIdx = 0;      // 0=Volume 1=Cutoff 2=Resonance 3=EnvMod 4=Decay 5=Accent 6=Tuning;
+                            // 7..23 (v14) are listed at CBEngine::ParamSweep.
     int startPat = 0, startStep = 0, startVal = 0;
     int endPat   = 0, endStep   = 15, endVal  = 0;
     // Keep the end value after the sweep ends, until the next sweep on the

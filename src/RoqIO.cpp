@@ -67,7 +67,16 @@ constexpr const char* kHapeMagic = "CreakboxHape";
 //     hold - the step-line trick again. The reader takes the token whenever it
 //     is there, whatever the header says. Stamped only when some sweep holds;
 //     the writer emits the token only at v13, so lower stamps keep their bytes.
-constexpr int kMaxVersion = 13;
+// v14: sweeps on the accent squelch and on the oscillator and acid FX sliders -
+//     sweep targets 7..23 (the table is in CBEngine.h). Not one byte of the
+//     layout changed: the sweep line is the same line with a bigger number in
+//     its first token. It is a version anyway because of what an OLDER build
+//     does with that number: it drops any sweep whose target is above 6 while
+//     loading, without a word, and plays the song without them. A song that
+//     quietly sounds different is the one outcome the header exists to
+//     prevent, so such a song is stamped 14 and an older build refuses it out
+//     loud instead. Stamped only when some sweep has such a target.
+constexpr int kMaxVersion = 14;
 
 // .hape shares the version counter with .roq for historical reasons, but its
 // schema — a sweep count and one line per sweep — has never changed. Pin it
@@ -79,6 +88,12 @@ constexpr int kMaxVersion = 13;
 // .roq applies: a .hape with no held sweep is still stamped 9 and still has the
 // seven-token lines every older build reads; only one carrying a held sweep is
 // stamped 13 and gets the eighth token.
+//
+// v14's new sweep targets do NOT raise it. A .hape is loaded from inside the
+// sweep editor, which keeps only the sweeps for the slider being edited and
+// says how many it skipped - so an older build handed a squelch sweep reports
+// "skipped 1 for other sliders" rather than misplaying anything. Refusing the
+// whole file would lose the sweeps it can use, to protect nothing.
 constexpr int kHapeVersion     = 9;
 constexpr int kHapeHoldVersion = 13;
 
@@ -261,8 +276,12 @@ std::optional<RoqSong> loadRoq(const std::string& path, std::string& error) {
 // a reader cannot absorb positionally. Keeping this a function of the *content*
 // is what lets an ordinary 16-step song stay loadable by pre-v10 builds.
 static int neededVersion(const RoqSong& song) {
-    // v13: any sweep that holds its end value. Checked first because 13
-    // implies everything below it.
+    // v14: any sweep on a target beyond the original seven. Checked first
+    // because 14 implies everything below it.
+    for (const auto& s : song.sweeps) {
+        if (s.sliderIdx >= CBEngine::kMainSweepTargets) return 14;
+    }
+    // v13: any sweep that holds its end value.
     if (anyHold(song.sweeps)) return 13;
     // v12: any pattern in triplet mode.
     for (const auto& p : song.patterns) {

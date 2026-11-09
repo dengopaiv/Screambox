@@ -132,7 +132,8 @@ Three consequences worth internalising before touching the UI:
 | Oscillator… | Opens the oscillator dialog |
 | Acid FX… | Opens the FX dialog — distortion, compressor, ring modulator. `Alt+X` or `Ctrl+D`. |
 
-**Press Enter on any of the seven parameter sliders to open its sweep editor.**
+**Press Enter on any of the seven parameter sliders, or on Accent squelch, to open its sweep
+editor.** The sliders in the Oscillator and Acid FX dialogs work the same way.
 
 ### Oscillator dialog
 
@@ -235,11 +236,18 @@ Amount at 0 skips the multiply entirely, and the frequency label says so.
 
 ### Sweeps — the modulation system
 
-Sweeps are the canonical way to modulate anything in Screambox. Each of the seven
-parameter sliders carries its own list of sweeps; a sweep interpolates a slider value
-between a `(pattern, step)` start point and a `(pattern, step)` end point. They can be
-copied and pasted between parameters, saved on their own as `.hape`, and are stored in
-every `.roq`.
+Sweeps are the canonical way to modulate anything in Screambox. Every continuous slider
+carries its own list of sweeps - the seven parameter sliders, Accent squelch, and every
+slider in the Oscillator and Acid FX dialogs; only the switches (waveforms, distortion
+type, resonance boost) and Tempo do not. A sweep interpolates a slider value between a
+`(pattern, step)` start point and a `(pattern, step)` end point. They can be copied and
+pasted between parameters - by slider position, so a Cutoff sweep across most of its slider
+pasted onto Ring frequency travels most of that one - saved on their own as `.hape`, and
+are stored in every `.roq`.
+
+Press **Enter** on a slider to open its sweep editor - on the main window and inside the
+two dialogs alike. In the dialogs Enter used to press Close; **Alt+C** and **Esc** still
+close them.
 
 How they behave, precisely:
 
@@ -257,9 +265,16 @@ How they behave, precisely:
 - **The sliders stay yours.** A sweep never changes what the slider is set to, and saving
   while a sweep is running saves the slider, not the sweep's momentary value. (It used to
   save the sweep's value as the slider setting.)
-- **A swept slider says so in its name** - `Cutoff (2 sweeps)` - which is what a screen
-  reader reads on focus, since moving it does nothing a sweep will not override at the
-  next step.
+- **A swept slider says so in its name** - `Cutoff (2 sweeps)`, `Gain (1 sweep)` - which
+  is what a screen reader reads on focus, since moving it does nothing a sweep will not
+  override at the next step.
+- **Frequencies glide in equal ratios.** PWM LFO rate and Ring frequency sweep
+  geometrically - 1 Hz to 16 Hz passes 2, 4 and 8 at even spacing - which is what moving
+  their exponential sliders at an even speed does. A rate sweep to or from *off* glides
+  from or to the slowest rate, 0.05 Hz, and is off only at the endpoint that says so.
+- **A sweep can switch an effect on.** Compressor depth and Ring amount are "off" at 0, and
+  a sweep that raises them turns the effect on for as long as it does - while the slider,
+  and the label that says "no effect", go on describing the slider.
 - **Patterns move, sweeps follow.** Inserting a pattern moves every sweep after it along
   with its music; deleting one moves them back, clamps an endpoint that was inside the
   deleted pattern to its nearest neighbour, and removes a sweep that lay wholly inside it.
@@ -269,7 +284,25 @@ How they behave, precisely:
 **The editor.** Pick a sweep by number, change it and press **Update**; **Add** makes a
 new one. A sweep whose end is before its start is refused with a reason (it could never
 play), as is one that overlaps another on the same slider. **Cancel** really cancels:
-every change made since the dialog opened is undone.
+every change made since the dialog opened is undone. A new sweep starts at the slider's
+current setting at both ends. The value sliders move like the slider they stand for -
+cents for Duplet detune, the dialogs' exponential tapers for the two frequencies, 0-200 %
+for Accent squelch.
+
+**Shapes.** Below the buttons, **Shape kind** (`Alt+K`), **Cycles** (`Alt+Y`) and
+**Generate shape** (`Alt+G`) fill the range set above - start to end, start value to end
+value - with a shape repeated that many times:
+
+- **Ramp** - start value to end value, every cycle; repeated, a sawtooth.
+- **Up and down** - start to end and back, every cycle; repeated, a triangle.
+- **Alternate** - the first half of each cycle at the start value, the second at the end.
+
+What Generate adds are ordinary sweeps - as few straight ones as draw the shape exactly,
+one value per step - so each piece can be edited, removed or copied like any other, and
+nothing about a shape reaches the engine or the file. The shape is refused, with a reason,
+if it would overlap a sweep already there, or if the range is too short for that many
+cycles. Hold, if ticked, applies to the shape's last piece. This is how a step-rate
+"LFO" is made: Up and down, 8 cycles, across the patterns it should run over.
 
 **There is deliberately no general-purpose LFO.** Sweeps cover that ground, and cover it
 with musical structure an LFO does not have.
@@ -545,6 +578,7 @@ is the **step line**, which grows by appending tokens rather than changing shape
 | 11 | `compThreshold`, `compDepth`, `ringHz`, `ringAmount`. **Written only when one of them differs from its default.** |
 | 12 | per-pattern triplet, as a second token on the pattern's `lastStep` line. **Written only when some pattern uses it**, and readable by older builds either way. |
 | 13 | per-sweep "hold end value", as an eighth token on the sweep line. **Written only when some sweep holds.** An older build reading the line takes the first seven tokens and simply does not hold. |
+| 14 | sweeps on Accent squelch and the Oscillator and Acid FX sliders - sweep targets 7 to 23 (listed in `CBEngine.h`). Not a byte of the layout changed; it is a version because an older build *silently drops* a sweep whose target is above 6, and would play the song without it. **Written only when some sweep has such a target**, so an older build refuses the song out loud instead. |
 
 The v8 step line is `pitch slide accent reverse`. Adding a token rather than changing the
 line's shape is what keeps it readable in both directions: an older three-token parser
@@ -555,7 +589,10 @@ extracts the first three and ignores the rest.
 A sweep collection on its own, for reusing a set of sweeps across songs. Magic
 `CreakboxHape`. Saved and loaded from inside the sweep editor. Stamped 9 - readable by any
 build - unless a sweep in it holds its end value, which stamps 13 and adds the hold token,
-the same "what the file needs" rule `.roq` follows.
+the same "what the file needs" rule `.roq` follows. v14's new sweep targets do not raise
+it: the editor keeps only the sweeps for the slider being edited and says how many it
+skipped, so an older build handed a squelch sweep reports it skipped rather than
+misplaying anything.
 
 ### `.cb` — 2002 module (import only)
 
@@ -618,7 +655,7 @@ Transport moved to F5–F8 to give it back.
 that acts on the step the step list has focused.
 
 **Sliders** — arrows ±1 · PgUp/PgDn ±10 · Home/End to the rails · **Enter opens the sweep
-editor**
+editor**, in the Oscillator and Acid FX dialogs too (close those with `Alt+C` or `Esc`)
 
 **Checkboxes** — `Space` **or Enter** toggles. Space is the system behaviour (it only
 works now that transport has vacated it); Enter is a subclass, because

@@ -284,8 +284,78 @@ void CBEngine::reindex(SongData& d) {
     d.patStart[d.patterns.size()] = at;
 }
 
+namespace {
+// How a stored sweep value becomes a parameter value, per sweep target. The
+// first seven are not in here: they keep their original expression in
+// process(), verbatim, which is what keeps their output bit-identical.
+struct SweepDest {
+    CbParam id;
+    float   div;        // stored value / div = parameter value
+    float   lo, hi;     // clamp, in parameter units
+    float   floorHz;    // geometric targets only: stands in for an endpoint <= 0
+    bool    geometric;  // equal ratios per step instead of equal differences
+    bool    zeroIsOff;  // an endpoint of exactly 0 means off, at that endpoint
+};
+constexpr SweepDest kSweepDests[CBEngine::kSweepTargets] = {
+    // 0..6 are placeholders; see process().
+    {CbParam::Volume,    100.0f, 0, 0, 0, false, false},
+    {CbParam::Cutoff,    100.0f, 0, 0, 0, false, false},
+    {CbParam::Resonance, 100.0f, 0, 0, 0, false, false},
+    {CbParam::EnvMod,    100.0f, 0, 0, 0, false, false},
+    {CbParam::Decay,     100.0f, 0, 0, 0, false, false},
+    {CbParam::Accent,    100.0f, 0, 0, 0, false, false},
+    {CbParam::Tuning,    100.0f, 0, 0, 0, false, false},
+    {CbParam::AccentSquelch,     100.0f,  0.0f, 2.0f,     0.0f,  false, false},
+    {CbParam::PWM,               100.0f,  0.0f, 1.0f,     0.0f,  false, false},
+    {CbParam::SubOscLevel,       100.0f,  0.0f, 1.0f,     0.0f,  false, false},
+    {CbParam::NoiseLevel,        100.0f,  0.0f, 1.0f,     0.0f,  false, false},
+    {CbParam::DupletPWM,         100.0f,  0.0f, 1.0f,     0.0f,  false, false},
+    {CbParam::DupletDetune,     1200.0f, -1.0f, 1.0f,     0.0f,  false, false},
+    {CbParam::DupletLevel,       100.0f,  0.0f, 1.0f,     0.0f,  false, false},
+    // The slowest rate the Rate slider offers; a sweep to or from "off" glides
+    // from or to it, and is off only at the endpoint that says so.
+    // Thousandths, not hundredths: the slow end of the Rate slider moves in
+    // steps of a few thousandths of a Hz, and hundredths merged them.
+    {CbParam::PwmLfoRate,       1000.0f,  0.0f, 100.0f,   0.05f, true,  true },
+    {CbParam::PwmLfoDepth,       100.0f,  0.0f, 1.0f,     0.0f,  false, false},
+    {CbParam::PwmLfoDupletDepth, 100.0f,  0.0f, 1.0f,     0.0f,  false, false},
+    {CbParam::DistGain,          100.0f,  0.0f, 1.0f,     0.0f,  false, false},
+    {CbParam::DistTone,          100.0f,  0.0f, 1.0f,     0.0f,  false, false},
+    {CbParam::DistLevel,         100.0f,  0.0f, 1.0f,     0.0f,  false, false},
+    {CbParam::CompThreshold,     100.0f,  0.0f, 1.0f,     0.0f,  false, false},
+    {CbParam::CompDepth,         100.0f,  0.0f, 1.0f,     0.0f,  false, false},
+    // The bottom of the Frequency slider. The carrier has no "off" - Amount is
+    // what switches the ring modulator off.
+    {CbParam::RingHz,            100.0f,  0.0f, 20000.0f, 5.0f,  true,  false},
+    {CbParam::RingAmount,        100.0f,  0.0f, 1.0f,     0.0f,  false, false},
+};
+
+// The value of sweep target k (7 and up) at fraction t of a sweep from a to
+// b, both in stored units.
+float sweepValueNew(int k, float a, float b, float t) {
+    const SweepDest& d = kSweepDests[k];
+    double v;
+    if (d.geometric) {
+        if (d.zeroIsOff && ((a <= 0.0f && t <= 0.0f) || (b <= 0.0f && t >= 1.0f)))
+            return 0.0f;
+        const double fa = (a > 0.0f) ? a / d.div : d.floorHz;
+        const double fb = (b > 0.0f) ? b / d.div : d.floorHz;
+        v = fa * std::pow(fb / fa, (double)t);
+    } else {
+        v = ((double)a + ((double)b - (double)a) * (double)t) / d.div;
+    }
+    if (v < d.lo) v = d.lo;
+    if (v > d.hi) v = d.hi;
+    return (float)v;
+}
+} // namespace
+
+CbParam CBEngine::sweepTargetParam(int idx) {
+    return (idx >= 0 && idx < kSweepTargets) ? kSweepDests[idx].id : CbParam::NumParams;
+}
+
 void CBEngine::setParamSweeps(int sliderIdx, const std::vector<ParamSweep>& sweeps) {
-    if (sliderIdx < 0 || sliderIdx >= 7) return;
+    if (sliderIdx < 0 || sliderIdx >= kSweepTargets) return;
     SongWriter w(*this);
     w.data().paramSweeps[sliderIdx] = sweeps;
     w.commit();
@@ -561,7 +631,9 @@ void CBEngine::triggerStep(const CbStep& currStep, const CbStep& nextStep) {
         // the whole expression (rather than only the residual term) makes the
         // knob audibly dramatic: sq=0 zeros the filter-envelope boost from
         // the accent (volume still kicks, but no wah), sq=2 doubles it.
-        const float sq = params_[int(CbParam::AccentSquelch)].load(std::memory_order_relaxed);
+        // Swept or not: sweeps are evaluated before triggerStep(), so a
+        // squelch sweep's value for this step is already in force here.
+        const float sq = effParam(CbParam::AccentSquelch);
         boxAccentFrq_ = (tempAccentFrq_ + 2.0) * sq;
     }
 
@@ -684,68 +756,79 @@ void CBEngine::process(float* out, int frames) {
 
     const float fTempo    = params_[int(CbParam::Tempo)].load(std::memory_order_relaxed);
     const float fWaveform = params_[int(CbParam::Waveform)].load(std::memory_order_relaxed);
-    const float fPWM        = params_[int(CbParam::PWM)].load(std::memory_order_relaxed);
-    const float fSubLevel   = params_[int(CbParam::SubOscLevel)].load(std::memory_order_relaxed);
     const float fDupletWv   = params_[int(CbParam::DupletWaveform)].load(std::memory_order_relaxed);
-    const float fDupletPWM  = params_[int(CbParam::DupletPWM)].load(std::memory_order_relaxed);
-    const float fDupletDet  = params_[int(CbParam::DupletDetune)].load(std::memory_order_relaxed);
-    const float fDupletLvl  = params_[int(CbParam::DupletLevel)].load(std::memory_order_relaxed);
-    const float fLfoRate    = params_[int(CbParam::PwmLfoRate)].load(std::memory_order_relaxed);
-    const float fLfoDepth   = params_[int(CbParam::PwmLfoDepth)].load(std::memory_order_relaxed);
-    const float fLfoDupDep  = params_[int(CbParam::PwmLfoDupletDepth)].load(std::memory_order_relaxed);
-    const float fNoiseLvl   = params_[int(CbParam::NoiseLevel)].load(std::memory_order_relaxed);
     const bool  bResoBoost  = params_[int(CbParam::ResoBoost)].load(std::memory_order_relaxed) > 0.5f;
     const int   iDistType   = (int)(params_[int(CbParam::DistType)].load(std::memory_order_relaxed) + 0.5f);
-    // Coefficients are derived once per block, never per sample — same tactic
-    // as the gate and envelope constants below.
-    CbDistCoeffs distC{};
-    if (iDistType != 0)
-        cbDistPrepare(distC, iDistType,
-                      params_[int(CbParam::DistGain)].load(std::memory_order_relaxed),
-                      params_[int(CbParam::DistTone)].load(std::memory_order_relaxed),
-                      params_[int(CbParam::DistLevel)].load(std::memory_order_relaxed),
-                      sampleRate_);
-    // Same tactic again: derived once per block, and only when the effect is
-    // actually on, so the off path costs a single comparison.
-    CbCompCoeffs compC{};
-    CbRingCoeffs ringC{};
-    const bool bComp = params_[int(CbParam::CompDepth)].load(std::memory_order_relaxed) > 0.0f;
-    const bool bRing = params_[int(CbParam::RingAmount)].load(std::memory_order_relaxed) > 0.0f;
-    if (bComp)
-        cbCompPrepare(compC,
-                      params_[int(CbParam::CompThreshold)].load(std::memory_order_relaxed),
-                      params_[int(CbParam::CompDepth)].load(std::memory_order_relaxed),
-                      sampleRate_);
-    if (bRing)
-        cbRingPrepare(ringC,
-                      params_[int(CbParam::RingHz)].load(std::memory_order_relaxed),
-                      params_[int(CbParam::RingAmount)].load(std::memory_order_relaxed),
-                      sampleRate_);
     const int   dupletSndType = fDupletWv > 0.5f ? 1 : 0;
-    // Detune factor: -1..+1 = ±1 octave → frequency factor 2^detune.
-    // 0 = unison, +1 = octave up, -1 = octave down, arbitrary fractions in
-    // between. The sub oscillator does NOT follow it: it runs at half the MAIN
-    // oscillator's rate (see subOscPhase_ below).
-    const double dupletFactor = std::pow(2.0, fDupletDet);
-    // PWM thresholds for square, one per oscillator. Widened to ~1..99 %
-    // duty at the extremes so the pulse narrows into near-silent spikes.
-    //
-    // These stay hoisted out of the sample loop and are used verbatim while
-    // the PWM LFO is off, which keeps the stock-303 path bit-identical. When
-    // the LFO runs the thresholds are recomputed per sample instead (see the
-    // loop below) — a block is longer than one cycle at the top of the rate
-    // range, so per-block modulation would alias.
-    const double pwmThresh       = pi + (fPWM       - 0.5) * pi * 1.98;
-    const double dupletPwmThresh = pi + (fDupletPWM - 0.5) * pi * 1.98;
-    const double pwmLfoInc       = (fLfoRate > 0.0f) ? (double)fLfoRate / sampleRate_ : 0.0;
     boxSndType_ = fWaveform > 0.5f ? 1 : 0;
 
-    // The seven sweepable parameters: the user's setting unless a sweep is
-    // overriding it right now. Re-derived at every step boundary (see Knobs).
-    auto eff = [this](CbParam p) -> float {
-        const int i = int(p);
-        return sweptOn_[i] ? sweptVal_[i] : params_[i].load(std::memory_order_relaxed);
+    // A parameter as the audio thread should use it now - swept or not.
+    auto eff = [this](CbParam p) -> float { return effParam(p); };
+
+    // The oscillator-dialog and acid-FX values, and everything derived from
+    // them. Sweepable since v14, so - like Knobs below, and for the same
+    // reason - computed at the top of the block AND again at every step
+    // boundary: a sweep's value written at a step boundary must not wait for
+    // the next block. The expressions are the ones that used to sit here as
+    // per-block constants, verbatim and in the same types, so with no sweep
+    // running every value is exactly what it was.
+    struct Voice {
+        float  pwm, subLevel, dupletPwm, dupletLvl, lfoDepth, lfoDupDep, noiseLvl;
+        double dupletFactor, pwmThresh, dupletPwmThresh, pwmLfoInc;
+        CbDistCoeffs distC;
+        CbCompCoeffs compC;
+        CbRingCoeffs ringC;
+        bool   comp, ring;
     };
+    auto voiceNow = [&]() {
+        Voice v{};
+        v.pwm       = eff(CbParam::PWM);
+        v.subLevel  = eff(CbParam::SubOscLevel);
+        v.dupletPwm = eff(CbParam::DupletPWM);
+        const float fDupletDet = eff(CbParam::DupletDetune);
+        v.dupletLvl = eff(CbParam::DupletLevel);
+        const float fLfoRate   = eff(CbParam::PwmLfoRate);
+        v.lfoDepth  = eff(CbParam::PwmLfoDepth);
+        v.lfoDupDep = eff(CbParam::PwmLfoDupletDepth);
+        v.noiseLvl  = eff(CbParam::NoiseLevel);
+        // Coefficients are derived per block (and per step), never per sample -
+        // same tactic as the gate and envelope constants below.
+        if (iDistType != 0)
+            cbDistPrepare(v.distC, iDistType,
+                          eff(CbParam::DistGain), eff(CbParam::DistTone), eff(CbParam::DistLevel),
+                          sampleRate_);
+        // Only when the effect is actually on, so the off path costs a single
+        // comparison.
+        v.comp = eff(CbParam::CompDepth)  > 0.0f;
+        v.ring = eff(CbParam::RingAmount) > 0.0f;
+        if (v.comp)
+            cbCompPrepare(v.compC, eff(CbParam::CompThreshold), eff(CbParam::CompDepth),
+                          sampleRate_);
+        if (v.ring)
+            cbRingPrepare(v.ringC, eff(CbParam::RingHz), eff(CbParam::RingAmount),
+                          sampleRate_);
+        // Detune factor: -1..+1 = ±1 octave → frequency factor 2^detune.
+        // 0 = unison, +1 = octave up, -1 = octave down, arbitrary fractions in
+        // between. The sub oscillator does NOT follow it: it runs at half the
+        // MAIN oscillator's rate (see subOscPhase_ below).
+        v.dupletFactor = std::pow(2.0, fDupletDet);
+        // PWM thresholds for square, one per oscillator. Widened to ~1..99 %
+        // duty at the extremes so the pulse narrows into near-silent spikes.
+        //
+        // These stay hoisted out of the sample loop and are used verbatim
+        // while the PWM LFO is off, which keeps the stock-303 path
+        // bit-identical. When the LFO runs the thresholds are recomputed per
+        // sample instead (see the loop below) — a block is longer than one
+        // cycle at the top of the rate range, so per-block modulation would
+        // alias.
+        v.pwmThresh       = pi + (v.pwm       - 0.5) * pi * 1.98;
+        v.dupletPwmThresh = pi + (v.dupletPwm - 0.5) * pi * 1.98;
+        v.pwmLfoInc       = (fLfoRate > 0.0f) ? (double)fLfoRate / sampleRate_ : 0.0;
+        return v;
+    };
+    Voice V = voiceNow();
+
+    // The seven main sliders: re-derived at every step boundary (see Knobs).
     auto knobsNow = [&]() {
         return deriveKnobs(eff(CbParam::Volume), eff(CbParam::Tuning), eff(CbParam::Cutoff),
                            eff(CbParam::Resonance), eff(CbParam::EnvMod), eff(CbParam::Decay),
@@ -825,7 +908,7 @@ void CBEngine::process(float* out, int frames) {
     // see the note at that second table for the evidence. This one is indexed
     // by the main window's left-to-right slider order, documented in RoqIO.h,
     // and it is what .roq sweeps and the sweep editor's sliderIdx mean.
-    static const CbParam kIds[7] = {
+    static const CbParam kIds[kMainSweepTargets] = {
         CbParam::Volume, CbParam::Cutoff, CbParam::Resonance, CbParam::EnvMod,
         CbParam::Decay, CbParam::Accent, CbParam::Tuning
     };
@@ -852,7 +935,7 @@ void CBEngine::process(float* out, int frames) {
     // `cur` keeps its end value if it holds; failing that, no override and
     // the slider's own setting applies.
     auto evaluateSweeps = [&](long cur) {
-        for (int k = 0; k < 7; ++k) {
+        for (int k = 0; k < kSweepTargets; ++k) {
             const auto& list = paramSweeps[k];
             const ParamSweep* cover = nullptr;
             const ParamSweep* before = nullptr;
@@ -868,8 +951,17 @@ void CBEngine::process(float* out, int frames) {
                 }
                 if (end < cur && (!before || end > beforeEnd)) { before = &sw; beforeEnd = end; }
             }
-            const int id = int(kIds[k]);
+            const int id = int(sweepTargetParam(k));
             if (!cover && !(before && before->hold)) { sweptOn_[id] = false; continue; }
+            if (k >= kMainSweepTargets) {
+                // The targets added in v14 decode through their own table, so
+                // the original seven below keep their expression untouched.
+                sweptVal_[id] = cover
+                    ? sweepValueNew(k, (float)cover->startVal, (float)cover->endVal, t)
+                    : sweepValueNew(k, (float)before->endVal, (float)before->endVal, 1.0f);
+                sweptOn_[id]  = true;
+                continue;
+            }
             // Raw matches the UI sliders (-100..+100 bipolar, 0..100
             // unipolar). Map to the param's native 0..1 (unipolar) or -1..+1
             // (bipolar) range.
@@ -1007,6 +1099,7 @@ void CBEngine::process(float* out, int frames) {
                     }
                 }
                 K = knobsNow();
+                V = voiceNow();
 
                 // The filter reset at every pattern start is the 2004 one
                 // ("reset filter every 16 steps"). It is skipped while a slide
@@ -1095,7 +1188,7 @@ void CBEngine::process(float* out, int frames) {
         boxOsc_ += phaseInc;
         if (boxOsc_ > twopi) boxOsc_ -= twopi;
         // Duplet runs at main frequency × detune factor.
-        dupletOsc_ += phaseInc * dupletFactor;
+        dupletOsc_ += phaseInc * V.dupletFactor;
         if (dupletOsc_ > twopi) dupletOsc_ -= twopi;
         // Sub-oscillator runs one octave below the main pitch.
         subOscPhase_ += phaseInc * 0.5;
@@ -1116,10 +1209,10 @@ void CBEngine::process(float* out, int frames) {
         // repeated patterns catch the LFO at different points. Both duty
         // thresholds fall back to the hoisted block constants when the LFO
         // is off, so rate == 0 costs one predictable branch and nothing else.
-        double thrMain   = pwmThresh;
-        double thrDuplet = dupletPwmThresh;
-        if (pwmLfoInc > 0.0) {
-            pwmLfoPhase_ += pwmLfoInc;
+        double thrMain   = V.pwmThresh;
+        double thrDuplet = V.dupletPwmThresh;
+        if (V.pwmLfoInc > 0.0) {
+            pwmLfoPhase_ += V.pwmLfoInc;
             if (pwmLfoPhase_ >= 1.0) pwmLfoPhase_ -= 1.0;
             // Triangle, bipolar, starting at centre and rising: 0 → +1 → -1 → 0.
             const double p = pwmLfoPhase_;
@@ -1129,12 +1222,12 @@ void CBEngine::process(float* out, int frames) {
             // Depth 1.0 against the centre PWM of 0.5 sweeps the full duty
             // range. Clamping (not wrapping) flattens at the rails, which is
             // the wanted behaviour — a wrap would snap the pulse inside out.
-            if (fLfoDepth > 0.0f) {
-                const double m = std::clamp((double)fPWM + (double)fLfoDepth * tri, 0.0, 1.0);
+            if (V.lfoDepth > 0.0f) {
+                const double m = std::clamp((double)V.pwm + (double)V.lfoDepth * tri, 0.0, 1.0);
                 thrMain = pi + (m - 0.5) * pi * 1.98;
             }
-            if (fLfoDupDep > 0.0f && fDupletLvl > 0.0f) {
-                const double m = std::clamp((double)fDupletPWM + (double)fLfoDupDep * tri, 0.0, 1.0);
+            if (V.lfoDupDep > 0.0f && V.dupletLvl > 0.0f) {
+                const double m = std::clamp((double)V.dupletPwm + (double)V.lfoDupDep * tri, 0.0, 1.0);
                 thrDuplet = pi + (m - 0.5) * pi * 1.98;
             }
         }
@@ -1146,19 +1239,19 @@ void CBEngine::process(float* out, int frames) {
             snd = (twopi - boxOsc_) * (1.0 / twopi);
         } else {
             // Square with variable duty cycle. PWM slider shifts the
-            // comparison threshold; at 0.5 (default) pwmThresh == pi → stock.
+            // comparison threshold; at 0.5 (default) V.pwmThresh == pi → stock.
             snd = (boxOsc_ > thrMain) ? 0.5 : -0.5;
         }
         // Duplet voice — mixed in with its own level. Off at 0.
-        if (fDupletLvl > 0.0f) {
+        if (V.dupletLvl > 0.0f) {
             double d;
             if (dupletSndType == 0) d = (twopi - dupletOsc_) * (1.0 / twopi);
             else                    d = (dupletOsc_ > thrDuplet) ? 0.5 : -0.5;
-            snd += d * (double)fDupletLvl;
+            snd += d * (double)V.dupletLvl;
         }
         // Sine sub-oscillator — thickens the bass an octave below.
-        if (fSubLevel > 0.0f) {
-            snd += std::sin(subOscPhase_) * (double)fSubLevel * 0.5;
+        if (V.subLevel > 0.0f) {
+            snd += std::sin(subOscPhase_) * (double)V.subLevel * 0.5;
         }
         // White noise, mixed in as just another oscillator: it lands before
         // the rest check and before the filter, so it is shaped by the cutoff
@@ -1166,12 +1259,12 @@ void CBEngine::process(float* out, int frames) {
         // to +/-0.5 to match the square's amplitude. Skipped entirely at
         // level 0 so the generator state never advances and that path stays
         // bit-identical to the pre-noise engine.
-        if (fNoiseLvl > 0.0f) {
+        if (V.noiseLvl > 0.0f) {
             noiseState_ ^= noiseState_ << 13;
             noiseState_ ^= noiseState_ >> 17;
             noiseState_ ^= noiseState_ << 5;
             const double n = (double)(int32_t)noiseState_ * (1.0 / 4294967296.0);
-            snd += n * (double)fNoiseLvl;
+            snd += n * (double)V.noiseLvl;
         }
         if (boxOscFrq_ == 0.0) snd = 0.0;
 
@@ -1208,7 +1301,7 @@ void CBEngine::process(float* out, int frames) {
         // Type 0 keeps the exact 2004 call, untouched, so the default sound
         // is bit-identical to the engine before the pedal models existed.
         snd = (iDistType == 0) ? (double)dist_dist((long double)snd)
-                               : cbDistProcess(distC, distState_, snd);
+                               : cbDistProcess(V.distC, distState_, snd);
 
         // Compressor BEFORE the ring modulator on purpose: its follower would
         // otherwise chase the carrier's amplitude modulation and partly cancel
@@ -1216,8 +1309,8 @@ void CBEngine::process(float* out, int frames) {
         // neither label explains. Both are skipped outright when off - not
         // multiplied by a neutral value - so no state advances and the off path
         // stays bit-identical to the engine before they existed.
-        if (bComp) snd = cbCompProcess(compC, compState_, snd);
-        if (bRing) snd = cbRingProcess(ringC, ringPhase_, snd);
+        if (V.comp) snd = cbCompProcess(V.compC, compState_, snd);
+        if (V.ring) snd = cbRingProcess(V.ringC, ringPhase_, snd);
 
         if (snd < -1.0) snd = -1.0;
         else if (snd > 1.0) snd = 1.0;

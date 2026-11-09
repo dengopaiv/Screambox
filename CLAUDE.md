@@ -153,6 +153,18 @@ shows up later as "it sounds different now" with no obvious cause.
      written only by the audio thread, cleared on stop and start. `params_` is the user's
      setting and nothing else - when sweeps wrote into it, Save and the WAV export picked
      up whatever a sweep was doing as if it were the slider, and Stop left it there.
+     **Anything that reads a sweepable parameter on the audio thread reads it through
+     `effParam()`**, never `params_` directly, or a sweep on it does nothing.
+   - **Sweep targets are numbered, and the numbers are file format.** 0-6 are the main
+     sliders (their own decode in `evaluateSweeps`, untouched since before v14); 7-23 are
+     squelch and the dialog sliders (`kSweepDests` in `CBEngine.cpp`, `kSweepUi` in
+     `MainWindow.cpp`, the list in `CBEngine.h`). Append only. A new sweepable parameter
+     gets the next number, a row in both tables, and - if the audio thread hoists it per
+     block - a place in `Voice` (`voiceNow()`), which is recomputed at every step boundary
+     for the rule above. Stored values are real units: percent, cents, and thousandths
+     (LFO rate) or hundredths (ring) of a Hz; hundredths merged the slow end of the LFO
+     slider. The frequency targets interpolate geometrically. The proof for a new target
+     is that a constant sweep renders byte-identical to the slider at that value.
    - **A sweep position is an absolute step number**, `patStart[p] + step`, with
      `patStart` a prefix sum computed in `SongWriter::commit()` (UI thread; the audio thread
      only reads it). A sweep therefore advances the same amount per step across patterns of
@@ -282,10 +294,12 @@ only because it grows by appending tokens.
   every new field a default that means "off" so older files load sounding identical.
 - **The version stamped is the lowest one that can represent the song, not the newest.**
   `neededVersion` in `RoqIO.cpp` decides. A song that uses nothing newer than v9 writes
-  exactly the bytes v9 wrote and still opens in an older build. Four rules feed it so far:
+  exactly the bytes v9 wrote and still opens in an older build. Five rules feed it so far:
   a pattern that is not 16 steps forces v10, any acid-FX field that differs from its default
-  forces v11, any pattern in triplet mode forces v12, and any sweep that holds its end value
-  forces v13. **Extend that function rather than
+  forces v11, any pattern in triplet mode forces v12, any sweep that holds its end value
+  forces v13, and any sweep on a target above 6 forces v14. v14 changed no bytes of the
+  layout; it exists because an older build *silently drops* such a sweep, and a song that
+  quietly sounds different is what the header is for. **Extend that function rather than
   bumping a constant**, and make the writer's field blocks `if (version >= N)` mirror the
   reader's exactly - a file stamped 9 that carries v11's lines would have those read as the
   pattern count.
@@ -306,6 +320,9 @@ only because it grows by appending tokens.
   number no older build accepts, to describe a change that did not happen to it, is a
   compatibility break for nothing. When v13 did change it (the hold token), it got the same
   content rule as `.roq`: 9 unless some sweep holds, 13 only then (`kHapeHoldVersion`).
+  v14's new sweep targets deliberately do **not** raise it: the sweep editor's Load keeps
+  only the current slider's sweeps and says how many it skipped, so an older build reports
+  a squelch sweep as skipped instead of misplaying it - there is nothing silent to prevent.
 - **Extend a line with an extra token** rather than changing its shape — an older
   three-token parser then still reads the first three correctly. This is how the per-step
   reverse-step column was added.

@@ -153,6 +153,17 @@ static LRESULT CALLBACK checkboxWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM l
     return CallWindowProcW(g_oldCheckProc, hwnd, msg, wp, lp);
 }
 
+// Enter on this trackbar opens the sweep editor for it: the subclass sends
+// WM_APP + 1 with the control id to the parent, which looks the id up with
+// sweepTargetForCtrl. Every trackbar shares one window class, so the first
+// subclass captures the original wndproc for all of them - the dialogs' too.
+static void makeSliderSweepable(HWND slider) {
+    WNDPROC prev = reinterpret_cast<WNDPROC>(
+        SetWindowLongPtrW(slider, GWLP_WNDPROC,
+                          reinterpret_cast<LONG_PTR>(sliderWndProc)));
+    if (!g_oldSliderProc) g_oldSliderProc = prev;
+}
+
 // All checkboxes share one window class, so the first subclass captures the
 // original wndproc for every one of them.
 static void makeCheckboxEnterActivatable(HWND box) {
@@ -266,6 +277,7 @@ void MainWindow::buildLayout() {
     wchar_t sqText[16]; swprintf(sqText, 16, L"%d%%", sqPos);
     hAccentSquelchValue_ = createLabel(hwnd_, hInst_, IDC_ACCENT_SQUELCH_VALUE,
         535, y + 18, 50, 16, sqText);
+    makeSliderSweepable(hAccentSquelch_);
 
     // Wildness slider: drives density (rest / slide / accent probability)
     // for all random-pattern and per-step randomize operations. Live slider,
@@ -349,13 +361,8 @@ void MainWindow::buildLayout() {
         SendMessageW(hSliders_[i], TBM_SETPOS, TRUE, static_cast<LPARAM>(initPos));
         hSliderValues_[i] = createLabel(hwnd_, hInst_, IDC_STATIC, x, y + 16 + sliderH + 2, sliderW, 16, L"");
         updateSliderValue(i);
-        // Subclass slider so Enter opens its sweep editor (only once;
-        // all trackbars use the same class wndproc so g_oldSliderProc
-        // captures the shared original).
-        WNDPROC prev = reinterpret_cast<WNDPROC>(
-            SetWindowLongPtrW(hSliders_[i], GWLP_WNDPROC,
-                              reinterpret_cast<LONG_PTR>(sliderWndProc)));
-        if (!g_oldSliderProc) g_oldSliderProc = prev;
+        // Subclass slider so Enter opens its sweep editor.
+        makeSliderSweepable(hSliders_[i]);
     }
     // Resonance boost sits directly under the Resonance slider (index 2) -
     // "under the filter", where the filter controls actually live. It lifts
@@ -501,17 +508,112 @@ void MainWindow::buildLayout() {
 
 // -------------------- Sweep editor --------------------
 
-static const wchar_t* kSliderNames[7] = {
-    L"Volume", L"Cutoff", L"Resonance", L"EnvMod", L"Decay", L"Accent", L"Tuning"
+// The two exponential tapers live with their dialogs further down; the sweep
+// editor needs them too, for the two frequency targets.
+static double lfoRateFromPos(int pos);
+static int    lfoPosFromRate(double hz);
+static void   formatLfoRate(double hz, wchar_t* out, size_t n);
+static double ringHzFromPos(int pos);
+static int    ringPosFromHz(double hz);
+static void   formatRingHz(double hz, wchar_t* out, size_t n);
+
+// How the sweep editor shows and stores each kind of sweep target. A sweep
+// STORES real units (CBEngine::ParamSweep lists them); the editor's two value
+// trackbars move in slider positions, the same ones the target's own slider
+// uses, so a frequency sweep feels like its slider and not like a raw Hz count.
+enum class SweepKind {
+    MainUni,   // main-window unipolar, 0..100, shown "+50%" as it always was
+    MainBi,    // main-window bipolar, -100..+100
+    Squelch,   // 0..200 %
+    Percent,   // 0..100 %
+    Amount,    // 0..100 %, "off" at 0 - the effect is switched off there
+    Cents,     // -1200..+1200 cents
+    LfoHz,     // PWM LFO rate: stored in 1/1000 Hz, slider is the dialog's taper
+    RingHz,    // ring carrier: stored in 1/100 Hz, slider is the dialog's taper
 };
-static bool isBipolarSlider(int idx) {
-    // Indexes match the main-UI slider order: 0=Vol, 1=Cut, 2=Rez, 3=Env,
-    // 4=Dec, 5=Acc, 6=Tune. Bipolar = can go negative.
-    return idx == 2 || idx == 3 || idx == 6;
+struct SweepTargetUi {
+    const wchar_t* name;   // in the editor's header and the status line
+    SweepKind kind;
+    int ctrlId;            // the slider whose Enter opens the editor for it
+};
+// Indexed by sweep target; the order is the file format's (CBEngine.h).
+static const SweepTargetUi kSweepUi[CBEngine::kSweepTargets] = {
+    {L"Volume",               SweepKind::MainUni, IDC_SLIDER_BASE + 0},
+    {L"Cutoff",               SweepKind::MainUni, IDC_SLIDER_BASE + 1},
+    {L"Resonance",            SweepKind::MainBi,  IDC_SLIDER_BASE + 2},
+    {L"EnvMod",               SweepKind::MainBi,  IDC_SLIDER_BASE + 3},
+    {L"Decay",                SweepKind::MainUni, IDC_SLIDER_BASE + 4},
+    {L"Accent",               SweepKind::MainUni, IDC_SLIDER_BASE + 5},
+    {L"Tuning",               SweepKind::MainBi,  IDC_SLIDER_BASE + 6},
+    {L"Accent squelch",       SweepKind::Squelch, IDC_ACCENT_SQUELCH},
+    {L"Main PWM",             SweepKind::Percent, IDC_OSC_PWM},
+    {L"Sub sine level",       SweepKind::Percent, IDC_OSC_SUB},
+    {L"Noise level",          SweepKind::Percent, IDC_OSC_NOISE},
+    {L"Duplet PWM",           SweepKind::Percent, IDC_OSC_DUP_PWM},
+    {L"Duplet detune",        SweepKind::Cents,   IDC_OSC_DUP_DETUNE},
+    {L"Duplet level",         SweepKind::Percent, IDC_OSC_DUP_LEVEL},
+    {L"PWM LFO rate",         SweepKind::LfoHz,   IDC_OSC_LFO_RATE},
+    {L"PWM LFO main depth",   SweepKind::Percent, IDC_OSC_LFO_MAIN},
+    {L"PWM LFO duplet depth", SweepKind::Percent, IDC_OSC_LFO_DUP},
+    {L"Distortion gain",      SweepKind::Percent, IDC_DIST_GAIN},
+    {L"Distortion tone",      SweepKind::Percent, IDC_DIST_TONE},
+    {L"Distortion level",     SweepKind::Percent, IDC_DIST_LEVEL},
+    {L"Compressor threshold", SweepKind::Percent, IDC_FX_COMP_THRESH},
+    {L"Compressor depth",     SweepKind::Amount,  IDC_FX_COMP_DEPTH},
+    {L"Ring frequency",       SweepKind::RingHz,  IDC_FX_RING_HZ},
+    {L"Ring amount",          SweepKind::Amount,  IDC_FX_RING_AMOUNT},
+};
+
+// The sweep target a slider stands for, or -1. Control ids are unique across
+// the main window and both dialogs, so one lookup serves all three.
+static int sweepTargetForCtrl(int ctrlId) {
+    for (int k = 0; k < CBEngine::kSweepTargets; ++k)
+        if (kSweepUi[k].ctrlId == ctrlId) return k;
+    return -1;
 }
-static void sweepValueLabelFor(int pos, wchar_t* out, size_t n) {
-    if (pos >= 0) swprintf(out, n, L"+%d%%", pos);
-    else          swprintf(out, n, L"%d%%", pos);
+
+static int sweepPosToStored(int target, int pos) {
+    switch (kSweepUi[target].kind) {
+        case SweepKind::LfoHz:  return (int)std::lround(lfoRateFromPos(pos) * 1000.0);
+        case SweepKind::RingHz: return (int)std::lround(ringHzFromPos(pos) * 100.0);
+        default:                return pos;
+    }
+}
+static int sweepStoredToPos(int target, int stored) {
+    switch (kSweepUi[target].kind) {
+        case SweepKind::LfoHz:  return lfoPosFromRate(stored / 1000.0);
+        case SweepKind::RingHz: return ringPosFromHz(stored / 100.0);
+        default:                return stored;
+    }
+}
+// A parameter value (engine units) as a stored sweep value, for starting a new
+// sweep at the slider's current setting.
+static int sweepStoredFromParam(int target, float v) {
+    switch (kSweepUi[target].kind) {
+        case SweepKind::Cents:  return (int)std::lround(v * 1200.0f);
+        case SweepKind::LfoHz:  return (int)std::lround(v * 1000.0f);
+        default:                return (int)std::lround(v * 100.0f);
+    }
+}
+static void sweepValueLabelFor(int target, int stored, wchar_t* out, size_t n) {
+    switch (kSweepUi[target].kind) {
+        case SweepKind::MainUni:
+        case SweepKind::MainBi:
+            if (stored >= 0) swprintf(out, n, L"+%d%%", stored);
+            else             swprintf(out, n, L"%d%%", stored);
+            break;
+        case SweepKind::Amount:
+            if (stored <= 0) swprintf(out, n, L"off");
+            else             swprintf(out, n, L"%d%%", stored);
+            break;
+        case SweepKind::Cents:
+            if (stored >= 0) swprintf(out, n, L"+%d c", stored);
+            else             swprintf(out, n, L"%d c", stored);
+            break;
+        case SweepKind::LfoHz:  formatLfoRate(stored / 1000.0, out, n); break;
+        case SweepKind::RingHz: formatRingHz(stored / 100.0, out, n);  break;
+        default:                swprintf(out, n, L"%d%%", stored);     break;
+    }
 }
 
 namespace { bool sweepsOverlap(const MainWindow::Sweep& a, const MainWindow::Sweep& b) {
@@ -546,6 +648,27 @@ static void setDlgLabel(HWND dlg, int id, const wchar_t* text) {
     SetWindowTextW(h, text);
     NotifyWinEvent(EVENT_OBJECT_NAMECHANGE, h, OBJID_CLIENT, CHILDID_SELF);
 }
+// The same, but silent when the text is already right: the dialogs re-set all
+// their labels whenever any one might have changed, and a name-change event
+// for a label that did not change is noise to a screen reader.
+static void setDlgLabelIfChanged(HWND dlg, int id, const std::wstring& text) {
+    wchar_t cur[160]{};
+    GetWindowTextW(GetDlgItem(dlg, id), cur, 160);
+    if (text != cur) setDlgLabel(dlg, id, text.c_str());
+}
+
+// Oscillator and Acid FX sliders: subclassed so Enter opens the sweep editor,
+// as it does on the main window. Without this Enter pressed the dialog's
+// default button and closed it - the opposite of what the same key does one
+// window away. The dialogs still close with Alt+C and Esc.
+static const int kOscSweepSliders[] = {
+    IDC_OSC_PWM, IDC_OSC_SUB, IDC_OSC_NOISE, IDC_OSC_DUP_PWM, IDC_OSC_DUP_DETUNE,
+    IDC_OSC_DUP_LEVEL, IDC_OSC_LFO_RATE, IDC_OSC_LFO_MAIN, IDC_OSC_LFO_DUP,
+};
+static const int kFxSweepSliders[] = {
+    IDC_DIST_GAIN, IDC_DIST_TONE, IDC_DIST_LEVEL, IDC_FX_COMP_THRESH,
+    IDC_FX_COMP_DEPTH, IDC_FX_RING_HZ, IDC_FX_RING_AMOUNT,
+};
 
 INT_PTR CALLBACK MainWindow::sweepEditorProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
     auto* self = reinterpret_cast<MainWindow*>(GetWindowLongPtrW(dlg, GWLP_USERDATA));
@@ -557,14 +680,21 @@ INT_PTR CALLBACK MainWindow::sweepEditorProc(HWND dlg, UINT msg, WPARAM wp, LPAR
     return self->sweepEditorHandler(dlg, msg, wp, lp);
 }
 
-static void configureSweepValueTrackbars(HWND dlg, int paramIdx) {
-    const int lo = isBipolarSlider(paramIdx) ? -100 : 0;
-    const int hi = 100;
+// The value trackbars take the range and step sizes of the target's own
+// slider, so the keys do in the editor what they do on the slider.
+static void configureSweepValueTrackbars(HWND dlg, int target) {
+    int lo = 0, hi = 100, line = 1, page = 10;
+    switch (kSweepUi[target].kind) {
+        case SweepKind::MainBi:  lo = -100; break;
+        case SweepKind::Squelch: hi = 200;  break;
+        case SweepKind::Cents:   lo = -1200; hi = 1200; line = 10; page = 100; break;
+        default: break;
+    }
     for (int id : {IDC_SWEEP_START_VALUE, IDC_SWEEP_END_VALUE}) {
         HWND t = GetDlgItem(dlg, id);
         SendMessageW(t, TBM_SETRANGE, TRUE, MAKELPARAM(lo, hi));
-        SendMessageW(t, TBM_SETLINESIZE, 0, 1);
-        SendMessageW(t, TBM_SETPAGESIZE, 0, 10);
+        SendMessageW(t, TBM_SETLINESIZE, 0, line);
+        SendMessageW(t, TBM_SETPAGESIZE, 0, page);
     }
 }
 
@@ -596,7 +726,7 @@ static void refillStepsForPattern(HWND dlg, int patternId, int stepId,
     fillStepCombo(dlg, stepId, patLens[p], keep);
 }
 
-static void populateSweepDialog(HWND dlg, const std::vector<int>& patLens,
+static void populateSweepDialog(HWND dlg, int target, const std::vector<int>& patLens,
                                 const MainWindow::Sweep& sw,
                                 const std::vector<MainWindow::Sweep>& all, int curIdx) {
     const int numPatterns = (int)patLens.size();
@@ -632,12 +762,14 @@ static void populateSweepDialog(HWND dlg, const std::vector<int>& patLens,
     // After the pattern combos, so each step list is sized to its own pattern.
     fillStepCombo(dlg, IDC_SWEEP_START_STEP, patLens[sp], sw.startStep);
     fillStepCombo(dlg, IDC_SWEEP_END_STEP,   patLens[ep], sw.endStep);
-    SendMessageW(GetDlgItem(dlg, IDC_SWEEP_START_VALUE), TBM_SETPOS, TRUE, sw.startValue);
-    SendMessageW(GetDlgItem(dlg, IDC_SWEEP_END_VALUE),   TBM_SETPOS, TRUE, sw.endValue);
+    SendMessageW(GetDlgItem(dlg, IDC_SWEEP_START_VALUE), TBM_SETPOS, TRUE,
+                 sweepStoredToPos(target, sw.startValue));
+    SendMessageW(GetDlgItem(dlg, IDC_SWEEP_END_VALUE),   TBM_SETPOS, TRUE,
+                 sweepStoredToPos(target, sw.endValue));
     CheckDlgButton(dlg, IDC_SWEEP_HOLD, sw.hold ? BST_CHECKED : BST_UNCHECKED);
-    wchar_t sv[16], ev[16];
-    sweepValueLabelFor(sw.startValue, sv, 16);
-    sweepValueLabelFor(sw.endValue,   ev, 16);
+    wchar_t sv[24], ev[24];
+    sweepValueLabelFor(target, sw.startValue, sv, 24);
+    sweepValueLabelFor(target, sw.endValue,   ev, 24);
     setDlgLabel(dlg, IDC_SWEEP_START_VALUE_LBL, sv);
     setDlgLabel(dlg, IDC_SWEEP_END_VALUE_LBL,   ev);
 
@@ -652,7 +784,90 @@ static void populateSweepDialog(HWND dlg, const std::vector<int>& patLens,
     }
 }
 
-static MainWindow::Sweep readSweepFromDialog(HWND dlg) {
+// Absolute song step of (pattern, step), counting each pattern's real length -
+// the same timeline the engine plays sweeps on (posOf in CBEngine::process).
+static long absStepOf(const std::vector<int>& patLens, int pat, int step) {
+    long at = 0;
+    for (int p = 0; p < pat && p < (int)patLens.size(); ++p) at += patLens[p];
+    return at + step;
+}
+static void patStepOf(const std::vector<int>& patLens, long abs, int& pat, int& step) {
+    pat = 0;
+    while (pat + 1 < (int)patLens.size() && abs >= patLens[pat]) { abs -= patLens[pat]; ++pat; }
+    step = (int)abs;
+}
+
+// The shapes Generate draws. Each is sampled once per step - the rate sweeps
+// run at - and the samples are joined into as few straight sweeps as describe
+// them exactly. The result is ordinary sweeps: nothing about a shape reaches
+// the engine or the file, so it costs no format change and every one of the
+// pieces can be edited afterwards like any other sweep.
+enum class SweepShape { Ramp, Triangle, Alternate };
+static const wchar_t* kShapeNames[] = {
+    L"Ramp (start to end)",
+    L"Up and down",
+    L"Alternate (start, end)",
+};
+
+// One value per step of the range, in the editor's slider positions. The ramp
+// reaches the end value on each cycle's last step, so its jump back is the
+// sawtooth's edge. The other two are periodic - sampled at j / L, so one cycle
+// leads into the next without a doubled step at the seam.
+static std::vector<double> shapeValues(SweepShape shape, long n, int cycles,
+                                       double a, double b) {
+    std::vector<double> v((size_t)n);
+    for (int c = 0; c < cycles; ++c) {
+        const long c0 = (long)((long long)c * n / cycles);
+        const long c1 = (long)((long long)(c + 1) * n / cycles);
+        const long len = c1 - c0;
+        for (long j = 0; j < len; ++j) {
+            double f = 0.0;
+            switch (shape) {
+                case SweepShape::Ramp:
+                    f = (len > 1) ? (double)j / (double)(len - 1) : 0.0;
+                    break;
+                case SweepShape::Triangle: {
+                    const double ph = (double)j / (double)len;
+                    f = (ph < 0.5) ? 2.0 * ph : 2.0 - 2.0 * ph;
+                    break;
+                }
+                case SweepShape::Alternate:   // first half at the start value
+                    f = (2 * j < len) ? 0.0 : 1.0;
+                    break;
+            }
+            v[(size_t)(c0 + j)] = a + (b - a) * f;
+        }
+    }
+    return v;
+}
+
+// The shape as sweeps: the per-step samples joined into straight runs, a run
+// continuing while each step changes by the same amount as the run's first.
+// `va` / `vb` are slider positions; the sweeps get stored values.
+static std::vector<MainWindow::Sweep> shapeSweeps(int target, const std::vector<int>& lens,
+                                                  long a0, long n, SweepShape shape,
+                                                  int cycles, int va, int vb) {
+    const std::vector<double> v = shapeValues(shape, n, cycles, va, vb);
+    std::vector<MainWindow::Sweep> made;
+    for (long i0 = 0; i0 < n; ) {
+        long i1 = i0;
+        if (i0 + 1 < n) {
+            const double d = v[(size_t)i0 + 1] - v[(size_t)i0];
+            i1 = i0 + 1;
+            while (i1 + 1 < n && std::fabs((v[(size_t)i1 + 1] - v[(size_t)i1]) - d) < 1e-9) ++i1;
+        }
+        MainWindow::Sweep s;
+        patStepOf(lens, a0 + i0, s.startPattern, s.startStep);
+        patStepOf(lens, a0 + i1, s.endPattern,   s.endStep);
+        s.startValue = sweepPosToStored(target, (int)std::lround(v[(size_t)i0]));
+        s.endValue   = sweepPosToStored(target, (int)std::lround(v[(size_t)i1]));
+        made.push_back(s);
+        i0 = i1 + 1;
+    }
+    return made;
+}
+
+static MainWindow::Sweep readSweepFromDialog(HWND dlg, int target) {
     // CB_ERR (-1) must never become a pattern or step number.
     auto sel = [&](int id) {
         const int v = (int)SendMessageW(GetDlgItem(dlg, id), CB_GETCURSEL, 0, 0);
@@ -663,8 +878,10 @@ static MainWindow::Sweep readSweepFromDialog(HWND dlg) {
     sw.startStep    = sel(IDC_SWEEP_START_STEP);
     sw.endPattern   = sel(IDC_SWEEP_END_PATTERN);
     sw.endStep      = sel(IDC_SWEEP_END_STEP);
-    sw.startValue   = (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_START_VALUE), TBM_GETPOS, 0, 0);
-    sw.endValue     = (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_END_VALUE),   TBM_GETPOS, 0, 0);
+    sw.startValue   = sweepPosToStored(target,
+        (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_START_VALUE), TBM_GETPOS, 0, 0));
+    sw.endValue     = sweepPosToStored(target,
+        (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_END_VALUE),   TBM_GETPOS, 0, 0));
     sw.hold         = IsDlgButtonChecked(dlg, IDC_SWEEP_HOLD) == BST_CHECKED;
     return sw;
 }
@@ -673,7 +890,7 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
     switch (msg) {
         case WM_INITDIALOG: {
             wchar_t hdr[128];
-            swprintf(hdr, 128, L"Editing sweeps for: %s", kSliderNames[editingSweepParam_]);
+            swprintf(hdr, 128, L"Editing sweeps for: %s", kSweepUi[editingSweepParam_].name);
             SetWindowTextW(GetDlgItem(dlg, IDC_SWEEP_PARAM_LABEL), hdr);
 
             configureSweepValueTrackbars(dlg, editingSweepParam_);
@@ -685,9 +902,32 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
             // list in place, so without a snapshot Cancel did exactly what OK did.
             sweepSnapshot_ = paramSweeps_[editingSweepParam_];
 
+            {
+                HWND sh = GetDlgItem(dlg, IDC_SWEEP_SHAPE);
+                for (const wchar_t* s : kShapeNames)
+                    SendMessageW(sh, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s));
+                SendMessageW(sh, CB_SETCURSEL, 0, 0);
+                HWND cy = GetDlgItem(dlg, IDC_SWEEP_CYCLES);
+                for (int c = 1; c <= 32; ++c) {
+                    wchar_t buf[8]; swprintf(buf, 8, L"%d", c);
+                    SendMessageW(cy, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(buf));
+                }
+                SendMessageW(cy, CB_SETCURSEL, 0, 0);
+            }
+
             const auto& list = paramSweeps_[editingSweepParam_];
-            Sweep current = list.empty() ? Sweep{} : list[editingSweepIndex_];
-            populateSweepDialog(dlg, patternLengths(),
+            // A new sweep starts at the slider's current setting, at both ends:
+            // a frequency target has no sensible zero to start from, and for
+            // the rest "where the slider is now" beats "the bottom of the range".
+            Sweep current;
+            if (list.empty()) {
+                const int now = sweepStoredFromParam(editingSweepParam_,
+                    engine_.getParam(CBEngine::sweepTargetParam(editingSweepParam_)));
+                current.startValue = current.endValue = now;
+            } else {
+                current = list[editingSweepIndex_];
+            }
+            populateSweepDialog(dlg, editingSweepParam_, patternLengths(),
                                 current, list, editingSweepIndex_);
             SetFocus(GetDlgItem(dlg, IDC_SWEEP_NUMBER));
             return FALSE;
@@ -695,11 +935,12 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
         case WM_HSCROLL: {
             // Refresh both value labels on any trackbar scroll — cheap and
             // keeps them in sync with the current slider positions.
+            const int k = editingSweepParam_;
             int startPos = (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_START_VALUE), TBM_GETPOS, 0, 0);
             int endPos   = (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_END_VALUE),   TBM_GETPOS, 0, 0);
-            wchar_t s[16], e[16];
-            sweepValueLabelFor(startPos, s, 16);
-            sweepValueLabelFor(endPos,   e, 16);
+            wchar_t s[24], e[24];
+            sweepValueLabelFor(k, sweepPosToStored(k, startPos), s, 24);
+            sweepValueLabelFor(k, sweepPosToStored(k, endPos),   e, 24);
             setDlgLabel(dlg, IDC_SWEEP_START_VALUE_LBL, s);
             setDlgLabel(dlg, IDC_SWEEP_END_VALUE_LBL,   e);
             HWND which = reinterpret_cast<HWND>(lp);  // which trackbar moved
@@ -730,13 +971,13 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                 int sel = (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_NUMBER), CB_GETCURSEL, 0, 0);
                 if (sel >= 0 && sel < (int)list.size()) {
                     editingSweepIndex_ = sel;
-                    populateSweepDialog(dlg, patternLengths(),
+                    populateSweepDialog(dlg, editingSweepParam_, patternLengths(),
                                         list[sel], list, sel);
                 }
                 return TRUE;
             }
             if (id == IDC_SWEEP_ADD) {
-                Sweep sw = readSweepFromDialog(dlg);
+                Sweep sw = readSweepFromDialog(dlg, editingSweepParam_);
                 if (sweepIsBackwards(sw)) {
                     setStatus(L"The end is before the start, so this sweep would never play. Adjust the ranges.");
                     return TRUE;
@@ -751,7 +992,7 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                 }
                 list.push_back(sw);
                 editingSweepIndex_ = (int)list.size() - 1;
-                populateSweepDialog(dlg, patternLengths(),
+                populateSweepDialog(dlg, editingSweepParam_, patternLengths(),
                                     list.back(), list, editingSweepIndex_);
                 setStatus(L"Sweep added.");
                 return TRUE;
@@ -765,7 +1006,7 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                     setStatus(L"No sweep to update. Press Add to create one.");
                     return TRUE;
                 }
-                Sweep sw = readSweepFromDialog(dlg);
+                Sweep sw = readSweepFromDialog(dlg, editingSweepParam_);
                 if (sweepIsBackwards(sw)) {
                     setStatus(L"The end is before the start, so this sweep would never play. Adjust the ranges.");
                     return TRUE;
@@ -780,7 +1021,7 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                     }
                 }
                 list[editingSweepIndex_] = sw;
-                populateSweepDialog(dlg, patternLengths(),
+                populateSweepDialog(dlg, editingSweepParam_, patternLengths(),
                                     list[editingSweepIndex_], list, editingSweepIndex_);
                 wchar_t m[64]; swprintf(m, 64, L"Sweep %d updated.", editingSweepIndex_ + 1);
                 setStatus(m);
@@ -791,21 +1032,32 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                 list.erase(list.begin() + editingSweepIndex_);
                 if (editingSweepIndex_ >= (int)list.size()) editingSweepIndex_ = (list.empty() ? 0 : (int)list.size() - 1);
                 Sweep show = list.empty() ? Sweep{} : list[editingSweepIndex_];
-                populateSweepDialog(dlg, patternLengths(),
+                populateSweepDialog(dlg, editingSweepParam_, patternLengths(),
                                     show, list, editingSweepIndex_);
                 setStatus(L"Sweep removed.");
                 return TRUE;
             }
             if (id == IDC_SWEEP_COPY) {
-                sweepClipboard_ = readSweepFromDialog(dlg);
+                // The clipboard holds SLIDER POSITIONS, not stored values. A
+                // sweep is pasted between parameters, and since v14 those store
+                // different units - percent, cents, fractions of a Hz. In
+                // positions, a Cutoff sweep from 10 to 80 pasted onto Ring
+                // frequency still travels most of that slider; in stored units
+                // it would be 0.1 Hz to 0.8 Hz, clamped to the bottom.
+                sweepClipboard_ = readSweepFromDialog(dlg, editingSweepParam_);
+                sweepClipboard_.startValue = sweepStoredToPos(editingSweepParam_, sweepClipboard_.startValue);
+                sweepClipboard_.endValue   = sweepStoredToPos(editingSweepParam_, sweepClipboard_.endValue);
                 sweepClipboardValid_ = true;
                 setStatus(L"Sweep copied to clipboard.");
                 return TRUE;
             }
             if (id == IDC_SWEEP_PASTE) {
                 if (!sweepClipboardValid_) { setStatus(L"Clipboard empty."); return TRUE; }
-                populateSweepDialog(dlg, patternLengths(),
-                                    sweepClipboard_, list, editingSweepIndex_);
+                Sweep pasted = sweepClipboard_;
+                pasted.startValue = sweepPosToStored(editingSweepParam_, pasted.startValue);
+                pasted.endValue   = sweepPosToStored(editingSweepParam_, pasted.endValue);
+                populateSweepDialog(dlg, editingSweepParam_, patternLengths(),
+                                    pasted, list, editingSweepIndex_);
                 setStatus(L"Pasted — press Add to commit.");
                 return TRUE;
             }
@@ -874,7 +1126,7 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                 }
                 editingSweepIndex_ = 0;
                 Sweep show = list.empty() ? Sweep{} : list.front();
-                populateSweepDialog(dlg, patternLengths(),
+                populateSweepDialog(dlg, editingSweepParam_, patternLengths(),
                                     show, list, editingSweepIndex_);
                 wchar_t m[192];
                 if (skipped > 0) {
@@ -883,6 +1135,66 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                 } else {
                     swprintf(m, 128, L"Loaded %zu sweep(s).", list.size());
                 }
+                setStatus(m);
+                return TRUE;
+            }
+            if (id == IDC_SWEEP_GENERATE) {
+                // Fills the range in the fields above with the chosen shape,
+                // drawn between the start and end values and repeated Cycles
+                // times. What it adds are ordinary sweeps.
+                const std::vector<int> lens = patternLengths();
+                const Sweep range = readSweepFromDialog(dlg, editingSweepParam_);
+                const long a0 = absStepOf(lens, range.startPattern, range.startStep);
+                const long a1 = absStepOf(lens, range.endPattern,   range.endStep);
+                if (a1 < a0) {
+                    setStatus(L"The end is before the start. Set the range the shape should fill, then Generate.");
+                    return TRUE;
+                }
+                int shapeSel = (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_SHAPE), CB_GETCURSEL, 0, 0);
+                if (shapeSel < 0) shapeSel = 0;
+                int cycles = (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_CYCLES), CB_GETCURSEL, 0, 0) + 1;
+                if (cycles < 1) cycles = 1;
+                const SweepShape shape = (SweepShape)shapeSel;
+                const long n = a1 - a0 + 1;
+                // A ramp needs one step a cycle; the other two need two, or
+                // there is no second half to go up-and-down or alternate in.
+                const long perCycle = (shape == SweepShape::Ramp) ? 1 : 2;
+                if (n < (long)cycles * perCycle) {
+                    wchar_t m[200];
+                    swprintf(m, 200, L"The range is %ld step%s, too short for %d cycle%s of this shape. "
+                                     L"Use fewer cycles or a longer range.",
+                             n, n == 1 ? L"" : L"s", cycles, cycles == 1 ? L"" : L"s");
+                    setStatus(m);
+                    return TRUE;
+                }
+                const int va = (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_START_VALUE), TBM_GETPOS, 0, 0);
+                const int vb = (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_END_VALUE),   TBM_GETPOS, 0, 0);
+                std::vector<Sweep> made = shapeSweeps(editingSweepParam_, lens, a0, n,
+                                                      shape, cycles, va, vb);
+                // Hold, if ticked, belongs to the shape's end - the pieces in
+                // between are followed at once by the next one anyway.
+                made.back().hold = range.hold;
+
+                for (const Sweep& s : made) {
+                    for (size_t k = 0; k < list.size(); ++k) {
+                        if (sweepsOverlap(list[k], s)) {
+                            wchar_t m[160];
+                            swprintf(m, 160, L"The shape would overlap sweep %zu. Remove it or choose another range.",
+                                     k + 1);
+                            setStatus(m);
+                            return TRUE;
+                        }
+                    }
+                }
+                const int first = (int)list.size();
+                list.insert(list.end(), made.begin(), made.end());
+                editingSweepIndex_ = first;
+                populateSweepDialog(dlg, editingSweepParam_, lens,
+                                    list[first], list, editingSweepIndex_);
+                wchar_t m[200];
+                swprintf(m, 200, L"Added %zu sweep%s, numbers %d to %d: %s, %d cycle%s.",
+                         made.size(), made.size() == 1 ? L"" : L"s", first + 1, (int)list.size(),
+                         kShapeNames[shapeSel], cycles, cycles == 1 ? L"" : L"s");
                 setStatus(m);
                 return TRUE;
             }
@@ -904,7 +1216,7 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
 // -------------------- Sweep plumbing --------------------
 
 void MainWindow::pushSweeps(CBEngine& target, int sliderIdx) const {
-    if (sliderIdx < 0 || sliderIdx >= 7) return;
+    if (sliderIdx < 0 || sliderIdx >= CBEngine::kSweepTargets) return;
     std::vector<CBEngine::ParamSweep> es;
     es.reserve(paramSweeps_[sliderIdx].size());
     for (const auto& s : paramSweeps_[sliderIdx]) {
@@ -918,7 +1230,7 @@ void MainWindow::pushSweeps(CBEngine& target, int sliderIdx) const {
 }
 
 void MainWindow::pushAllSweeps(CBEngine& target) const {
-    for (int k = 0; k < 7; ++k) pushSweeps(target, k);
+    for (int k = 0; k < CBEngine::kSweepTargets; ++k) pushSweeps(target, k);
 }
 
 size_t MainWindow::clearAllSweeps() {
@@ -929,7 +1241,29 @@ size_t MainWindow::clearAllSweeps() {
     return n;
 }
 
+std::wstring MainWindow::sweptLabel(const std::wstring& base, int target) const {
+    const size_t n = paramSweeps_[target].size();
+    if (!n) return base;
+    std::wstring s = base;
+    const bool colon = !s.empty() && s.back() == L':';
+    if (colon) s.pop_back();
+    wchar_t suffix[32];
+    swprintf(suffix, 32, L" (%zu sweep%s)", n, n == 1 ? L"" : L"s");
+    s += suffix;
+    if (colon) s += L':';
+    return s;
+}
+
 void MainWindow::refreshSweptLabels() {
+    // Accent squelch is target 7 and sits apart from the row of seven.
+    if (hAccentSquelch_ && hAccentSquelchLabel_) {
+        const std::wstring label = sweptLabel(L"Accent s&quelch:", 7);
+        const std::wstring plain = sweptLabel(L"Accent squelch", 7);
+        SetWindowTextW(hAccentSquelchLabel_, label.c_str());
+        NotifyWinEvent(EVENT_OBJECT_NAMECHANGE, hAccentSquelchLabel_, OBJID_CLIENT, CHILDID_SELF);
+        SetWindowTextW(hAccentSquelch_, plain.c_str());
+        NotifyWinEvent(EVENT_OBJECT_NAMECHANGE, hAccentSquelch_, OBJID_CLIENT, CHILDID_SELF);
+    }
     for (int i = 0; i < 7; ++i) {
         if (!hSliders_[i] || !hSliderLabels_[i]) continue;
         const size_t n = paramSweeps_[i].size();
@@ -1030,13 +1364,27 @@ static void setLfoRateTrack(HWND dlg, double hz) {
 // the MAIN waveform is chosen on the main window, not in this dialog, so a
 // greyed slider would announce "unavailable" to a screen reader with no
 // discoverable cause.
-void MainWindow::refreshLfoDepthLabels(HWND dlg) {
+//
+// Every label is set here, not only those two, because each also says how many
+// sweeps its slider carries. The base texts repeat resource.rc's; keep the two
+// in step (tools/check_keyboard.py reads the mnemonics from the .rc).
+void MainWindow::refreshOscLabels(HWND dlg) {
     const bool mainSaw = engine_.getParam(CbParam::Waveform)       <= 0.5f;
     const bool dupSaw  = engine_.getParam(CbParam::DupletWaveform) <= 0.5f;
-    SetWindowTextW(GetDlgItem(dlg, IDC_OSC_LFO_MAIN_LABEL),
-        mainSaw ? L"&Main depth (saw - no effect):" : L"&Main depth:");
-    SetWindowTextW(GetDlgItem(dlg, IDC_OSC_LFO_DUP_LABEL),
-        dupSaw ? L"D&uplet depth (saw - no effect):" : L"D&uplet depth:");
+    const struct { int id; const wchar_t* base; int target; } labels[] = {
+        {IDC_OSC_PWM_LABEL,        L"Main &PWM (square duty):",  8},
+        {IDC_OSC_SUB_LABEL,        L"Sub sine &level (-1 oct):", 9},
+        {IDC_OSC_NOISE_LABEL,      L"N&oise level:",             10},
+        {IDC_OSC_DUP_PWM_LABEL,    L"P&WM:",                     11},
+        {IDC_OSC_DUP_DETUNE_LABEL, L"&Detune:",                  12},
+        {IDC_OSC_DUP_LEVEL_LABEL,  L"Le&vel:",                   13},
+        {IDC_OSC_LFO_RATE_LABEL,   L"&Rate:",                    14},
+        {IDC_OSC_LFO_MAIN_LABEL,
+            mainSaw ? L"&Main depth (saw - no effect):" : L"&Main depth:",   15},
+        {IDC_OSC_LFO_DUP_LABEL,
+            dupSaw ? L"D&uplet depth (saw - no effect):" : L"D&uplet depth:", 16},
+    };
+    for (const auto& l : labels) setDlgLabelIfChanged(dlg, l.id, sweptLabel(l.base, l.target));
 }
 
 INT_PTR MainWindow::oscDialogHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
@@ -1066,9 +1414,19 @@ INT_PTR MainWindow::oscDialogHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
                 static_cast<int>(engine_.getParam(CbParam::PwmLfoDepth) * 100.0f + 0.5f));
             setTrackAndLabel(dlg, IDC_OSC_LFO_DUP, IDC_OSC_LFO_DUP_VALUE,
                 static_cast<int>(engine_.getParam(CbParam::PwmLfoDupletDepth) * 100.0f + 0.5f));
-            refreshLfoDepthLabels(dlg);
+            for (int id : kOscSweepSliders) makeSliderSweepable(GetDlgItem(dlg, id));
+            refreshOscLabels(dlg);
             SetFocus(GetDlgItem(dlg, IDC_OSC_PWM));
             return FALSE;
+        }
+        case WM_APP + 1: {
+            // Enter on a slider: its sweep editor, modal to this dialog.
+            const int target = sweepTargetForCtrl(static_cast<int>(wp));
+            if (target >= 0) {
+                openSweepEditor(target, dlg);
+                refreshOscLabels(dlg);
+            }
+            return TRUE;
         }
         case WM_HSCROLL: {
             HWND which = reinterpret_cast<HWND>(lp);
@@ -1114,7 +1472,7 @@ INT_PTR MainWindow::oscDialogHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
             if (id == IDC_OSC_DUP_WAVEFORM && notif == CBN_SELCHANGE) {
                 int sel = (int)SendMessageW(GetDlgItem(dlg, IDC_OSC_DUP_WAVEFORM), CB_GETCURSEL, 0, 0);
                 engine_.setParam(CbParam::DupletWaveform, sel == 1 ? 1.0f : 0.0f);
-                refreshLfoDepthLabels(dlg);
+                refreshOscLabels(dlg);
                 return TRUE;
             }
             if (id == IDC_OSC_RESET_303) {
@@ -1130,7 +1488,7 @@ INT_PTR MainWindow::oscDialogHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
                 setLfoRateTrack(dlg, 0.0);
                 setTrackAndLabel(dlg, IDC_OSC_LFO_MAIN, IDC_OSC_LFO_MAIN_VALUE, 0);
                 setTrackAndLabel(dlg, IDC_OSC_LFO_DUP, IDC_OSC_LFO_DUP_VALUE, 0);
-                refreshLfoDepthLabels(dlg);
+                refreshOscLabels(dlg);
                 return TRUE;
             }
             if (id == IDOK || id == IDCANCEL) { EndDialog(dlg, id); return TRUE; }
@@ -1242,7 +1600,17 @@ INT_PTR MainWindow::distDialogHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) 
         setTrackAndLabel(dlg, IDC_FX_RING_AMOUNT, IDC_FX_RING_AMOUNT_VALUE, ringPos);
         setAmountLabel(dlg, IDC_FX_RING_AMOUNT_VALUE, ringPos);
 
+        for (int id : kFxSweepSliders) makeSliderSweepable(GetDlgItem(dlg, id));
         refreshDistLabels(dlg);
+        return TRUE;
+    }
+    case WM_APP + 1: {
+        // Enter on a slider: its sweep editor, modal to this dialog.
+        const int target = sweepTargetForCtrl(static_cast<int>(wp));
+        if (target >= 0) {
+            openSweepEditor(target, dlg);
+            refreshDistLabels(dlg);
+        }
         return TRUE;
     }
     case WM_HSCROLL: {
@@ -1300,29 +1668,32 @@ INT_PTR MainWindow::distDialogHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) 
 // Rather than disabling three controls (which announces "unavailable" with no
 // discoverable cause), say so in their labels, the same way the PWM LFO depth
 // labels do when the oscillator is a saw.
+//
+// Every label is set here, because each also says how many sweeps its slider
+// carries. The base texts repeat resource.rc's; keep the two in step.
 void MainWindow::refreshDistLabels(HWND dlg) {
     const bool classic = (int)(engine_.getParam(CbParam::DistType) + 0.5f) == 0;
-    SetWindowTextW(GetDlgItem(dlg, IDC_DIST_GAIN_LABEL),
-                   classic ? L"&Gain (no effect - Classic):" : L"&Gain:");
-    SetWindowTextW(GetDlgItem(dlg, IDC_DIST_TONE_LABEL),
-                   classic ? L"T&one (no effect - Classic):" : L"T&one:");
-    SetWindowTextW(GetDlgItem(dlg, IDC_DIST_LEVEL_LABEL),
-                   classic ? L"&Level (no effect - Classic):" : L"&Level:");
-
     // Same treatment for the two knobs that do nothing while their effect is
     // switched off. Threshold with depth at zero, and carrier frequency with
     // amount at zero, are both live controls with no audible result, which is
     // exactly the situation that needs saying out loud rather than greying out.
+    // (A sweep on the depth or amount can switch the effect on while the
+    // slider says off; the label describes the slider, which is what Save
+    // stores and what plays wherever no sweep covers.)
     const bool noComp = engine_.getParam(CbParam::CompDepth)  <= 0.0f;
     const bool noRing = engine_.getParam(CbParam::RingAmount) <= 0.0f;
-    SetWindowTextW(GetDlgItem(dlg, IDC_FX_COMP_THRESH_LABEL),
-                   noComp ? L"Th&reshold (no effect - depth off):" : L"Th&reshold:");
-    SetWindowTextW(GetDlgItem(dlg, IDC_FX_RING_HZ_LABEL),
-                   noRing ? L"&Frequency (no effect - amount off):" : L"&Frequency:");
-    NotifyWinEvent(EVENT_OBJECT_NAMECHANGE, GetDlgItem(dlg, IDC_FX_COMP_THRESH_LABEL),
-                   OBJID_CLIENT, CHILDID_SELF);
-    NotifyWinEvent(EVENT_OBJECT_NAMECHANGE, GetDlgItem(dlg, IDC_FX_RING_HZ_LABEL),
-                   OBJID_CLIENT, CHILDID_SELF);
+    const struct { int id; const wchar_t* base; int target; } labels[] = {
+        {IDC_DIST_GAIN_LABEL,  classic ? L"&Gain (no effect - Classic):"  : L"&Gain:",  17},
+        {IDC_DIST_TONE_LABEL,  classic ? L"T&one (no effect - Classic):"  : L"T&one:",  18},
+        {IDC_DIST_LEVEL_LABEL, classic ? L"&Level (no effect - Classic):" : L"&Level:", 19},
+        {IDC_FX_COMP_THRESH_LABEL,
+            noComp ? L"Th&reshold (no effect - depth off):" : L"Th&reshold:", 20},
+        {IDC_FX_COMP_DEPTH_LABEL,  L"&Depth:",  21},
+        {IDC_FX_RING_HZ_LABEL,
+            noRing ? L"&Frequency (no effect - amount off):" : L"&Frequency:", 22},
+        {IDC_FX_RING_AMOUNT_LABEL, L"&Amount:", 23},
+    };
+    for (const auto& l : labels) setDlgLabelIfChanged(dlg, l.id, sweptLabel(l.base, l.target));
 }
 
 void MainWindow::openOscillatorDialog() {
@@ -1372,11 +1743,11 @@ void MainWindow::resetTo303() {
     announceValue(hStatus_, "Everybody needs a 303 \u2014 engine reset to defaults.");
 }
 
-void MainWindow::openSweepEditor(int sliderIdx) {
-    if (sliderIdx < 0 || sliderIdx >= 7) return;
+void MainWindow::openSweepEditor(int sliderIdx, HWND owner) {
+    if (sliderIdx < 0 || sliderIdx >= CBEngine::kSweepTargets) return;
     editingSweepParam_ = sliderIdx;
     editingSweepIndex_ = 0;
-    DialogBoxParamW(hInst_, MAKEINTRESOURCEW(IDD_SWEEP_EDIT), hwnd_,
+    DialogBoxParamW(hInst_, MAKEINTRESOURCEW(IDD_SWEEP_EDIT), owner ? owner : hwnd_,
                     &MainWindow::sweepEditorProc,
                     reinterpret_cast<LPARAM>(this));
 
@@ -1387,7 +1758,7 @@ void MainWindow::openSweepEditor(int sliderIdx) {
 
     char sb[128];
     _snprintf_s(sb, _TRUNCATE, "Sweep editor closed for %s. %zu sweep(s) stored.",
-        fromWide(kSliderNames[sliderIdx]).c_str(), paramSweeps_[sliderIdx].size());
+        fromWide(kSweepUi[sliderIdx].name).c_str(), paramSweeps_[sliderIdx].size());
     announceValue(hStatus_, sb);
 }
 
@@ -2303,9 +2674,9 @@ void MainWindow::loadRoqFile() {
     // but no longer applied (the engine always uses Frank's TB-303 buildup).
 
     // Distribute sweeps back into per-slider buckets and push to engine.
-    for (int k = 0; k < 7; ++k) paramSweeps_[k].clear();
+    for (auto& list : paramSweeps_) list.clear();
     for (const auto& sw : song->sweeps) {
-        if (sw.sliderIdx < 0 || sw.sliderIdx >= 7) continue;
+        if (sw.sliderIdx < 0 || sw.sliderIdx >= CBEngine::kSweepTargets) continue;
         Sweep ui;
         ui.startPattern = sw.startPat; ui.startStep = sw.startStep; ui.startValue = sw.startVal;
         ui.endPattern   = sw.endPat;   ui.endStep   = sw.endStep;   ui.endValue   = sw.endVal;
@@ -2382,7 +2753,7 @@ void MainWindow::saveRoqFile() {
     song.patterns.reserve(n);
     for (int i = 0; i < n; ++i) song.patterns.push_back(engine_.getPatternAt(i));
 
-    for (int k = 0; k < 7; ++k) {
+    for (int k = 0; k < CBEngine::kSweepTargets; ++k) {
         for (const auto& s : paramSweeps_[k]) {
             RoqSweep sw;
             sw.sliderIdx = k;
@@ -2441,7 +2812,10 @@ void MainWindow::showKeyboardReference() {
         L"   Ctrl+T: Triplet feel for this pattern (12 steps = one bar)\r\n"
         L"   Space or Enter: toggle focused checkbox (slide / accent / reverse)\r\n"
         L"\r\nSliders: arrow keys ±1, Page Up/Down ±10, Home/End min/max,\r\n"
-        L"   Enter opens the sweep editor for that slider.\r\n"
+        L"   Enter opens the sweep editor for that slider - on the main window\r\n"
+        L"   and in the Oscillator and Acid FX dialogs (Alt+C or Esc closes those).\r\n"
+        L"Sweep editor: Alt+K shape, Alt+Y cycles, Alt+G generates the shape\r\n"
+        L"   over the range and values above it.\r\n"
         L"Bipolar sliders (Rezo, EnvMod, Tuning) accept negative values.\r\n"
         L"Screen readers announce every control's value on change.",
         L"Keyboard reference",
@@ -2597,10 +2971,10 @@ LRESULT MainWindow::proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (lp) onSliderScroll(reinterpret_cast<HWND>(lp));
             return 0;
         case WM_APP + 1: {
-            // Enter-on-slider -> open sweep editor for that slider's param.
-            int ctrlId = static_cast<int>(wp);
-            int sliderIdx = ctrlId - IDC_SLIDER_BASE;
-            if (sliderIdx >= 0 && sliderIdx < 7) openSweepEditor(sliderIdx);
+            // Enter-on-slider -> open sweep editor for that slider's param:
+            // the seven, and Accent squelch.
+            const int target = sweepTargetForCtrl(static_cast<int>(wp));
+            if (target >= 0) openSweepEditor(target);
             return 0;
         }
         // WM_NOTIFY handling for the old ListView step editor was removed

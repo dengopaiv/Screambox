@@ -26,6 +26,35 @@ reported the 2026-11-06 test build working.
 
 ---
 
+# X. Sweeps everywhere, Enter in the dialogs, shapes — BUILT 2026-11-09, needs ears
+
+Dengo's three points, decided through the question dialog:
+
+1. **Accent squelch had no sweep** -> it, and every slider in the Oscillator and Acid FX
+   dialogs, is now a sweep target (7..23). `.roq` v14, stamped only when used.
+2. **Enter in those dialogs pressed Close**, while Enter on a main-window slider opens the
+   sweep editor -> Enter on a dialog slider now opens its sweep editor; Alt+C / Esc close.
+3. **Sweeps vs envelopes, and presets** -> sweeps stay song-position automation; "presets"
+   became shapes (ramp / up and down / alternate, N cycles) that the sweep editor draws as
+   ordinary sweeps. No engine or format change for that part. A per-note envelope was
+   discussed and not chosen.
+
+**Verified** (harness against `git show HEAD:`, one source built twice): 58 of 58 common
+renders byte-identical to HEAD at 32/64/512/1024 frames, including the original seven's
+sweeps and a patch with every dialog feature on; every case identical across block sizes;
+for each of the 17 new targets a constant sweep is byte-identical to the slider at that
+value, and a ramp audibly differs; zero allocations in `process()` with all 24 targets
+swept; all 34 shipped `.roq` re-save byte-identical (still 9 / 11); a v14 song is refused
+by HEAD's reader and round-trips in the new one; the shape generator's output, replayed
+step by step, matches the shape within half a slider step with no overlaps or gaps. Both
+`tools/` checks pass; the app starts and closes with exit code 0.
+
+**Not verified - needs a person:** Enter on each dialog slider with a screen reader (that
+the editor opens over the dialog, focus returns to the slider, and the "(n sweeps)" label
+is read); the shapes by ear, especially Up and down on Ring frequency and on PWM LFO rate.
+
+---
+
 # 2026-11-06 source study — RESOLVED 2026-11-06
 
 **How these were found.** A read of every compiled source, plus a throwaway headless probe

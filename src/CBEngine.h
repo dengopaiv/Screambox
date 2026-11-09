@@ -152,6 +152,28 @@ public:
     // 4=Decay, 5=Accent, 6=Tuning. Note Tuning is LAST here and SECOND in the
     // legacy .cb Sweep above; the two orderings are both correct and must not
     // be reconciled. This is the order `.roq` and `.hape` store as sliderIdx.
+    //
+    // 7 and up were added later (.roq v14) and are APPEND-ONLY - the number is
+    // what a saved song stores, so never reorder or reuse one:
+    //    7 Accent squelch          (value = squelch x 100, 0..200)
+    //    8 PWM, 9 Sub level, 10 Noise, 11 Duplet PWM      (percent, 0..100)
+    //   12 Duplet detune           (cents, -1200..+1200)
+    //   13 Duplet level            (percent)
+    //   14 PWM LFO rate            (thousandths of a Hz, 0 = off)
+    //   15 LFO main depth, 16 LFO duplet depth            (percent)
+    //   17 Dist gain, 18 Dist tone, 19 Dist level         (percent)
+    //   20 Comp threshold, 21 Comp depth                  (percent)
+    //   22 Ring frequency          (hundredths of a Hz)
+    //   23 Ring amount             (percent)
+    // Values are real units, never slider positions, for the same reason the
+    // parameters themselves are: a UI taper can then be retuned without
+    // changing what saved songs do. The two frequencies interpolate
+    // GEOMETRICALLY - equal ratios per step, which is how a sweep in pitch or
+    // rate is heard, and exactly what moving their exponential sliders at an
+    // even speed does.
+    static constexpr int kMainSweepTargets = 7;    // the original seven
+    static constexpr int kSweepTargets     = 24;   // all of them
+    static CbParam sweepTargetParam(int idx);
     struct ParamSweep {
         int startPat = 0, startStep = 0, startVal = 0;
         int endPat   = 0, endStep   = 15, endVal  = 0;
@@ -218,6 +240,13 @@ private:
     std::atomic<int> transportReset_{int(TransportReset::None)};
     void applyTransportReset(TransportReset r);
     void triggerStep(const CbStep& s, const CbStep& next);
+    // A parameter's value as the audio thread should use it right now: the
+    // sweep's if one is overriding it, otherwise the user's setting. Audio
+    // thread only, since sweptOn_ / sweptVal_ are.
+    float effParam(CbParam p) const {
+        const int i = int(p);
+        return sweptOn_[i] ? sweptVal_[i] : params_[i].load(std::memory_order_relaxed);
+    }
     double noteFreq(int pitch) const;
 
     double sampleRate_ = 48000.0;
@@ -240,7 +269,7 @@ private:
         std::vector<CbPattern> patterns{CbPattern{}};   // never empty
         Sweep sweeps[7]{};
         bool  sweepsEnabled = false;
-        std::vector<ParamSweep> paramSweeps[7];
+        std::vector<ParamSweep> paramSweeps[kSweepTargets];
         // Derived by commit(), never edited directly. patStart[p] is the
         // absolute step number pattern p starts at (size patterns + 1), so a
         // sweep can advance evenly per step across patterns of different

@@ -169,6 +169,9 @@
 #define IDC_SWEEP_STATUS            721
 #define IDC_SWEEP_START_VALUE_LBL   722
 #define IDC_SWEEP_END_VALUE_LBL     723
+#define IDC_SWEEP_SHAPE             724
+#define IDC_SWEEP_CYCLES            725
+#define IDC_SWEEP_GENERATE          726
 
 // Step-edit dialog
 #define IDD_STEP_EDIT               500

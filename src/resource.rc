@@ -141,7 +141,7 @@ END
 // (IDD_STEP_EDIT dialog removed — replaced by inline per-step controls
 //  in the main window.)
 
-IDD_SWEEP_EDIT DIALOGEX 0, 0, 360, 282
+IDD_SWEEP_EDIT DIALOGEX 0, 0, 360, 306
 STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Sweep editor"
 FONT 9, "Segoe UI", 400, 0, 0x0
@@ -180,9 +180,17 @@ BEGIN
     PUSHBUTTON      "Pa&ste",            IDC_SWEEP_PASTE,  264, 180, 60, 18, WS_TABSTOP
     PUSHBUTTON      "Save to &file...",  IDC_SWEEP_SAVE,   8,   202, 90, 18, WS_TABSTOP
     PUSHBUTTON      "L&oad from file...", IDC_SWEEP_LOAD,  102, 202, 90, 18, WS_TABSTOP
-    LTEXT           "",                  IDC_SWEEP_STATUS, 8, 226, 344, 28
-    DEFPUSHBUTTON   "OK",                IDOK,             240, 260, 50, 16, WS_TABSTOP
-    PUSHBUTTON      "Cancel",            IDCANCEL,         294, 260, 50, 16, WS_TABSTOP
+    // Shapes: fills the range above (start to end, start value to end value)
+    // with ordinary sweeps drawing the chosen shape, repeated. Nothing new
+    // reaches the engine or the file - the result is plain sweeps.
+    LTEXT           "Shape &kind:",      IDC_STATIC,       8,   228, 46, 14
+    COMBOBOX        IDC_SWEEP_SHAPE,     56,  226, 110, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "C&ycles:",          IDC_STATIC,       174, 228, 30, 14
+    COMBOBOX        IDC_SWEEP_CYCLES,    206, 226, 40, 160, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON      "&Generate shape",   IDC_SWEEP_GENERATE, 254, 225, 90, 18, WS_TABSTOP
+    LTEXT           "",                  IDC_SWEEP_STATUS, 8, 250, 344, 28
+    DEFPUSHBUTTON   "OK",                IDOK,             240, 284, 50, 16, WS_TABSTOP
+    PUSHBUTTON      "Cancel",            IDCANCEL,         294, 284, 50, 16, WS_TABSTOP
 END
 
 IDD_OSCILLATOR DIALOGEX 0, 0, 300, 314

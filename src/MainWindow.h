@@ -146,8 +146,10 @@ private:
     void clampEditingIdx();
     std::wstring currentFile_;
 
-    // Per-parameter list of sweeps (see public Sweep struct).
-    std::vector<Sweep> paramSweeps_[7];
+    // Per-target list of sweeps (see public Sweep struct). Indexed by sweep
+    // target - the seven main sliders, then squelch and the dialog sliders;
+    // the numbering is at CBEngine::ParamSweep and is what a .roq stores.
+    std::vector<Sweep> paramSweeps_[CBEngine::kSweepTargets];
     // The one place a UI sweep list becomes an engine sweep list. Used for the
     // live engine and for the WAV export's private engine alike - the export
     // once forgot to copy sweeps at all, because every call site had its own
@@ -170,7 +172,12 @@ private:
     int   editingSweepParam_ = -1;  // which slider opened the dialog
     int   editingSweepIndex_ = 0;   // currently-viewed sweep in the dialog
 
-    void openSweepEditor(int sliderIdx);
+    // `owner` is the window the editor is modal to: the main window, or the
+    // Oscillator or Acid FX dialog when Enter was pressed on one of theirs.
+    void openSweepEditor(int sliderIdx, HWND owner = nullptr);
+    // A label as it should read with the target's sweep count in it:
+    // "&Gain:" becomes "&Gain (2 sweeps):". Empty count, label unchanged.
+    std::wstring sweptLabel(const std::wstring& base, int target) const;
     static INT_PTR CALLBACK sweepEditorProc(HWND, UINT, WPARAM, LPARAM);
     INT_PTR sweepEditorHandler(HWND, UINT, WPARAM, LPARAM);
 
@@ -179,7 +186,8 @@ private:
     void openDistortionDialog();
     static INT_PTR CALLBACK distDialogProc(HWND, UINT, WPARAM, LPARAM);
     INT_PTR distDialogHandler(HWND, UINT, WPARAM, LPARAM);
-    // Retitles gain/tone/level to say when Classic makes them inert.
+    // Sets every slider label in the dialog: gain/tone/level say when Classic
+    // makes them inert, and each says how many sweeps its slider carries.
     void refreshDistLabels(HWND dlg);
 
     // Oscillator parameter dialog (PWM, sub, duplet, reset-to-303).
@@ -188,6 +196,7 @@ private:
     static INT_PTR CALLBACK oscDialogProc(HWND, UINT, WPARAM, LPARAM);
     INT_PTR oscDialogHandler(HWND, UINT, WPARAM, LPARAM);
     void resetTo303();
-    // Retitles the two LFO depth labels to say when they are inert (saw).
-    void refreshLfoDepthLabels(HWND dlg);
+    // Sets every slider label in the dialog: the two LFO depth labels say when
+    // they are inert (saw), and each says how many sweeps its slider carries.
+    void refreshOscLabels(HWND dlg);
 };
