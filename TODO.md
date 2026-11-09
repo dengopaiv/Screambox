@@ -226,6 +226,18 @@ the main window from our own four dialogs only - recognised by dialog procedure,
 dialogs keep F5 as Refresh - skips auto-repeat, and copies the main window's status text
 into the dialog's status line so a screen reader there hears it.
 
+**A second sweep was impossible to add** (Dengo, same day). The Sweep number list offered
+"(new)" only while it was empty; after one sweep the fields always showed an existing sweep,
+so Add could only collide with it - "Overlap with sweep 1. Adjust ranges." - and with a
+first sweep filling the pattern there was nowhere obvious to adjust to. Now "(new sweep)"
+is always the last entry and starts the fields in the first range no sweep of that kind
+covers (after patterns 1-4, pattern 5); an overlap names the sweep and range in the way and
+the way out. The default range of a first sweep, the whole pattern, stays. Straight sweeps
+on one slider still may not overlap - only a straight sweep and an LFO may.
+**LFOs explained:** Help (F1) in the sweep editor and the Modulation dialog, a status-line
+sentence whenever the LFO wave changes, and an opening line in the Modulation dialog.
+Driven in the app, including the patterns 1-4 then 5 case.
+
 **What changed where:**
 - Engine: `SweepOsc` on `ParamSweep`; `evaluateSweeps` chooses the straight and the
   oscillating sweep separately; `osc_` per target, Hz phases accumulated per sample and

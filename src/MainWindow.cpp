@@ -246,6 +246,19 @@ LRESULT CALLBACK MainWindow::dialogKeyHook(int code, WPARAM wp, LPARAM lp) {
         const bool plain = !(GetKeyState(VK_CONTROL) & 0x8000) && !(GetKeyState(VK_SHIFT) & 0x8000)
                         && !(GetKeyState(VK_MENU) & 0x8000);
         int cmd = 0;
+        if (fresh && plain && m->wParam == VK_F1) {
+            // F1 in a dialog explains that dialog. Posted, not sent: a message
+            // box opened from inside a message hook is a nested modal loop.
+            HWND root = GetAncestor(m->hwnd, GA_ROOT);
+            const DLGPROC proc = root ? reinterpret_cast<DLGPROC>(GetWindowLongPtrW(root, DWLP_DLGPROC))
+                                      : nullptr;
+            const int help = proc == &MainWindow::sweepEditorProc ? IDC_SWEEP_HELP
+                           : proc == &MainWindow::modDialogProc   ? IDC_MOD_HELP : 0;
+            if (help) {
+                PostMessageW(root, WM_COMMAND, help, 0);
+                return TRUE;
+            }
+        }
         if (fresh && plain) {
             switch (m->wParam) {
                 case VK_F5: cmd = IDM_TRANSPORT_PLAY_SONG;     break;
@@ -845,7 +858,11 @@ static void populateSweepDialog(HWND dlg, int target, const std::vector<int>& pa
         wchar_t buf[24]; swprintf(buf, 24, all[i].osc.on() ? L"%d (LFO)" : L"%d", i + 1);
         SendMessageW(num, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(buf));
     }
-    if (all.empty()) SendMessageW(num, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"(new)"));
+    // Always there, always last, at index all.size(): the way to start another
+    // sweep. It used to appear only while the list was empty, so once one sweep
+    // existed the fields always showed an existing one and Add could only
+    // collide with it - a second sweep looked impossible.
+    SendMessageW(num, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"(new sweep)"));
     SendMessageW(num, CB_SETCURSEL, curIdx, 0);
 
     auto fillPatterns = [&](int id) {
@@ -918,6 +935,128 @@ static void patStepOf(const std::vector<int>& patLens, long abs, int& pat, int& 
     while (pat + 1 < (int)patLens.size() && abs >= patLens[pat]) { abs -= patLens[pat]; ++pat; }
     step = (int)abs;
 }
+
+// "pattern 1, step 1 to pattern 1, step 16" - counted from 1, as the combos are.
+static std::wstring sweepRangeText(const MainWindow::Sweep& s) {
+    wchar_t b[96];
+    if (s.startPattern == s.endPattern)
+        swprintf(b, 96, L"pattern %d, steps %d to %d", s.startPattern + 1, s.startStep + 1, s.endStep + 1);
+    else
+        swprintf(b, 96, L"pattern %d step %d to pattern %d step %d",
+                 s.startPattern + 1, s.startStep + 1, s.endPattern + 1, s.endStep + 1);
+    return b;
+}
+
+// Why Add / Update / Apply refused: which sweep is in the way, where, and what
+// to do about it. "Overlap with sweep 1. Adjust ranges." was all it used to
+// say, and with the first sweep filling the pattern there was no free range to
+// adjust TO - a second sweep looked impossible.
+static std::wstring overlapText(const MainWindow::Sweep& other, size_t k) {
+    wchar_t b[320];
+    swprintf(b, 320, L"Overlaps sweep %zu (%ls). Two straight sweeps, or two LFOs, cannot share a "
+                     L"step on one slider. Shorten one, or choose (new sweep) in Sweep number to "
+                     L"start in a free range.", k + 1, sweepRangeText(other).c_str());
+    return b;
+}
+
+// The fields for "(new sweep)": the first run of steps that no sweep of the
+// same kind covers, up to the end of that step's pattern, at `value` both ends.
+// `found` is false when every step is covered - the fields then show pattern
+// 1 and the caller says why. Straight sweeps and LFOs are counted apart, as
+// sweepsOverlap() does: an LFO never blocks a straight sweep or the reverse.
+static MainWindow::Sweep freshSweep(const std::vector<MainWindow::Sweep>& list,
+                                    const std::vector<int>& lens, bool lfo, int value,
+                                    bool& found) {
+    MainWindow::Sweep s;
+    s.startValue = s.endValue = value;
+    const int first = lens.empty() ? 16 : lens[0];
+    s.endStep = first - 1;
+    found = false;
+    long total = 0;
+    for (int n : lens) total += n;
+    if (total <= 0) return s;
+    std::vector<char> covered((size_t)total, 0);
+    for (const auto& o : list) {
+        if (o.osc.on() != lfo) continue;
+        // Endpoints as the engine clamps them (posOf in CBEngine::process); a
+        // pattern this song does not have lies past its end and covers nothing.
+        auto at = [&](int p, int st) -> long {
+            if (p >= (int)lens.size()) return total;
+            if (p < 0) return -1;
+            if (st >= lens[p]) st = lens[p] - 1;
+            return absStepOf(lens, p, st < 0 ? 0 : st);
+        };
+        const long a0 = std::max(0L, at(o.startPattern, o.startStep));
+        const long a1 = std::min(total - 1, at(o.endPattern, o.endStep));
+        for (long i = a0; i <= a1; ++i) covered[(size_t)i] = 1;
+    }
+    long i = 0;
+    while (i < total && covered[(size_t)i]) ++i;
+    if (i >= total) return s;
+    int p0, st0;
+    patStepOf(lens, i, p0, st0);
+    long j = i;
+    while (j + 1 < total && !covered[(size_t)j + 1] && j + 1 - i < lens[p0] - st0) ++j;
+    patStepOf(lens, i, s.startPattern, s.startStep);
+    patStepOf(lens, j, s.endPattern, s.endStep);
+    found = true;
+    return s;
+}
+
+// Shown in the status line when the LFO wave changes, so the choice explains
+// itself where the user is. The whole story is behind Help (F1).
+static const wchar_t* kWaveExplain[] = {
+    L"Straight sweep: the slider goes evenly from Start value to End value across the range, "
+    L"then back to its own setting - or stays, with Hold.",
+    L"LFO: moves the slider up and down by itself, around its own setting or a straight sweep "
+    L"on the same steps. Depth is how far it swings. F1 explains more.",
+};
+
+static const wchar_t kSweepHelp[] =
+    L"A SWEEP moves one slider by itself while the song plays. Each slider can have several, "
+    L"at different places in the song.\r\n\r\n"
+    L"STRAIGHT SWEEP (LFO wave: Off)\r\n"
+    L"From the start pattern and step to the end pattern and step, the slider goes evenly from "
+    L"Start value to End value. After the end it returns to the slider's own setting, or keeps "
+    L"the end value if Hold is ticked. Two straight sweeps on one slider cannot cover the same "
+    L"step.\r\n\r\n"
+    L"LFO (any other wave)\r\n"
+    L"An LFO swings the slider up and down by itself, over and over. It does not replace the "
+    L"slider: it swings around the slider's own setting, or around a straight sweep on the same "
+    L"steps, so a ramp and a wobble can run at once.\r\n"
+    L"- Wave: triangle, sine, square, saw up or saw down - the shape of each swing.\r\n"
+    L"- Start depth and End depth: how far it swings each way. Different values make the swing "
+    L"grow or fade across the range.\r\n"
+    L"- Frequency, measured in steps per cycle (follows the tempo: 16 is one swing a 16-step bar, "
+    L"4 one a beat) or in Hz (swings a second, whatever the tempo).\r\n"
+    L"- Starting phase, in degrees: where in its swing it starts. 0 starts in the middle going "
+    L"up, 180 in the middle going down.\r\n"
+    L"- Hold keeps it swinging after its end, until the next LFO on this slider.\r\n"
+    L"An LFO may cover the same steps as a straight sweep; two LFOs on one slider may not. Main "
+    L"PWM and Duplet PWM follow an LFO smoothly; every other slider moves once a step, so a fast "
+    L"LFO there comes out in steps. The Modulation dialog (Ctrl+M on the main window) adds a "
+    L"ready-made LFO to the whole song.\r\n\r\n"
+    L"ADDING MORE\r\n"
+    L"Sweep number lists the sweeps on this slider, then (new sweep). Choose (new sweep) and the "
+    L"fields start in the first range no sweep covers yet; set them and press Add. To change a "
+    L"sweep, choose its number, change the fields and press Update.\r\n\r\n"
+    L"KEYS\r\n"
+    L"Apply (Alt+Y) updates the sweep shown and lets you hear it without closing. F5 to F8 play "
+    L"and stop as on the main window. Cancel undoes everything since the editor opened, applied "
+    L"or not.";
+
+static const wchar_t kModulationHelp[] =
+    L"This dialog lists every slider that can move by itself, each with what it carries - "
+    L"Cutoff (2 sweeps, 1 LFO).\r\n\r\n"
+    L"A straight sweep moves a slider from one value to another across part of the song. An LFO "
+    L"swings it up and down by itself, over and over, around the slider's own setting.\r\n\r\n"
+    L"Enter, or Edit sweeps, opens the chosen slider's sweep editor, where both kinds are made "
+    L"and changed; press F1 there for the details.\r\n\r\n"
+    L"LFO preset and Add LFO to the whole song put a ready-made LFO on the chosen slider, from "
+    L"the start of the song to the end and beyond. A preset's depth is a share of the slider's "
+    L"range, so the same preset suits any slider. Each slider takes one LFO at a time; edit or "
+    L"remove it in the sweep editor.\r\n\r\n"
+    L"F5 to F8 play and stop as on the main window, so you can listen while you work.";
 
 // The shapes Generate draws. Each is sampled once per step - the rate sweeps
 // run at - and the samples are joined into as few straight sweeps as describe
@@ -1070,14 +1209,10 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
             }
 
             const auto& list = paramSweeps_[editingSweepParam_];
-            // A new sweep starts at the slider's current setting, at both ends:
-            // a frequency target has no sensible zero to start from, and for
-            // the rest "where the slider is now" beats "the bottom of the range".
             Sweep current;
             if (list.empty()) {
-                const int now = sweepStoredFromParam(editingSweepParam_,
-                    engine_.getParam(CBEngine::sweepTargetParam(editingSweepParam_)));
-                current.startValue = current.endValue = now;
+                bool found = false;
+                current = freshSweep(list, patternLengths(), false, newSweepValue(), found);
             } else {
                 current = list[editingSweepIndex_];
             }
@@ -1123,6 +1258,12 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
             }
             if (id == IDC_SWEEP_WAVE && notif == CBN_SELCHANGE) {
                 refreshSweepWaveLabels(dlg);
+                const bool lfo = SendMessageW(GetDlgItem(dlg, IDC_SWEEP_WAVE), CB_GETCURSEL, 0, 0) > 0;
+                setStatus(kWaveExplain[lfo ? 1 : 0]);
+                return TRUE;
+            }
+            if (id == IDC_SWEEP_HELP) {
+                MessageBoxW(dlg, kSweepHelp, L"Sweeps and LFOs", MB_OK | MB_ICONINFORMATION);
                 return TRUE;
             }
             if (id == IDC_SWEEP_NUMBER && notif == CBN_SELCHANGE) {
@@ -1131,6 +1272,21 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                     editingSweepIndex_ = sel;
                     populateSweepDialog(dlg, editingSweepParam_, patternLengths(),
                                         list[sel], list, sel);
+                } else if (sel == (int)list.size()) {
+                    // (new sweep): the first free range, at the slider's setting.
+                    editingSweepIndex_ = sel;
+                    const std::vector<int> lens = patternLengths();
+                    bool found = false;
+                    const Sweep fresh = freshSweep(list, lens, false, newSweepValue(), found);
+                    populateSweepDialog(dlg, editingSweepParam_, lens, fresh, list, sel);
+                    if (found) {
+                        const std::wstring m = L"New sweep, in the first free range: "
+                            + sweepRangeText(fresh) + L". Set it up and press Add.";
+                        setStatus(m.c_str());
+                    } else {
+                        setStatus(L"Every step already has a straight sweep. An LFO can still go on "
+                                  L"top - choose an LFO wave - or shorten a sweep to make room.");
+                    }
                 }
                 return TRUE;
             }
@@ -1155,9 +1311,7 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                     for (size_t k = 0; k < list.size(); ++k) {
                         if ((int)k == editingSweepIndex_) continue;
                         if (sweepsOverlap(list[k], sw)) {
-                            wchar_t m[128];
-                            swprintf(m, 128, L"Overlap with sweep %zu. Adjust ranges.", k + 1);
-                            setStatus(m);
+                            setStatus(overlapText(list[k], k).c_str());
                             return TRUE;
                         }
                     }
@@ -1177,9 +1331,12 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                 else if (any)
                     swprintf(m, 256, L"Applied: sweep %d updated, and all %zu are what you hear now. %s",
                              editingSweepIndex_ + 1, list.size(), tail);
-                else
+                else if (list.empty())
                     swprintf(m, 256, L"Applied: no sweeps on this slider. Add one first to hear it. %s",
                              tail);
+                else
+                    swprintf(m, 256, L"Applied the %zu sweeps already here. This new one is not added "
+                                     L"yet: press Add, then Apply. %s", list.size(), tail);
                 setStatus(m);
                 return TRUE;
             }
@@ -1192,9 +1349,7 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                 if (const wchar_t* why = sweepOscProblem(sw)) { setStatus(why); return TRUE; }
                 for (size_t k = 0; k < list.size(); ++k) {
                     if (sweepsOverlap(list[k], sw)) {
-                        wchar_t m[128];
-                        swprintf(m, 128, L"Overlap with sweep %zu. Adjust ranges.", k + 1);
-                        setStatus(m);
+                        setStatus(overlapText(list[k], k).c_str());
                         return TRUE;
                     }
                 }
@@ -1202,7 +1357,9 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                 editingSweepIndex_ = (int)list.size() - 1;
                 populateSweepDialog(dlg, editingSweepParam_, patternLengths(),
                                     list.back(), list, editingSweepIndex_);
-                setStatus(sw.osc.on() ? L"LFO added." : L"Sweep added.");
+                setStatus(sw.osc.on()
+                    ? L"LFO added. To add another, choose (new sweep) in Sweep number."
+                    : L"Sweep added. To add another, choose (new sweep) in Sweep number.");
                 return TRUE;
             }
             if (id == IDC_SWEEP_UPDATE) {
@@ -1211,7 +1368,7 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                 // and adding it again - Add refused, because the new version
                 // overlapped the very sweep it was meant to replace.
                 if (list.empty() || editingSweepIndex_ < 0 || editingSweepIndex_ >= (int)list.size()) {
-                    setStatus(L"No sweep to update. Press Add to create one.");
+                    setStatus(L"This is a new sweep, not added yet: press Add.");
                     return TRUE;
                 }
                 Sweep sw = readSweepFromDialog(dlg, editingSweepParam_);
@@ -1223,9 +1380,7 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                 for (size_t k = 0; k < list.size(); ++k) {
                     if ((int)k == editingSweepIndex_) continue;
                     if (sweepsOverlap(list[k], sw)) {
-                        wchar_t m[128];
-                        swprintf(m, 128, L"Overlap with sweep %zu. Adjust ranges.", k + 1);
-                        setStatus(m);
+                        setStatus(overlapText(list[k], k).c_str());
                         return TRUE;
                     }
                 }
@@ -1237,10 +1392,16 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                 return TRUE;
             }
             if (id == IDC_SWEEP_REMOVE) {
-                if (list.empty()) { setStatus(L"No sweep to remove."); return TRUE; }
+                if (editingSweepIndex_ < 0 || editingSweepIndex_ >= (int)list.size()) {
+                    setStatus(L"This is a new sweep, not added yet: there is nothing to remove.");
+                    return TRUE;
+                }
                 list.erase(list.begin() + editingSweepIndex_);
                 if (editingSweepIndex_ >= (int)list.size()) editingSweepIndex_ = (list.empty() ? 0 : (int)list.size() - 1);
-                Sweep show = list.empty() ? Sweep{} : list[editingSweepIndex_];
+                bool found = false;
+                Sweep show = list.empty()
+                    ? freshSweep(list, patternLengths(), false, newSweepValue(), found)
+                    : list[editingSweepIndex_];
                 populateSweepDialog(dlg, editingSweepParam_, patternLengths(),
                                     show, list, editingSweepIndex_);
                 setStatus(L"Sweep removed.");
@@ -1422,6 +1583,14 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
         }
     }
     return FALSE;
+}
+
+// A new sweep starts at the slider's current setting, at both ends: a
+// frequency target has no sensible zero to start from, and for the rest
+// "where the slider is now" beats "the bottom of the range".
+int MainWindow::newSweepValue() const {
+    return sweepStoredFromParam(editingSweepParam_,
+        engine_.getParam(CBEngine::sweepTargetParam(editingSweepParam_)));
 }
 
 // -------------------- Sweep plumbing --------------------
@@ -1959,6 +2128,9 @@ INT_PTR MainWindow::modDialogHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
             for (const auto& p : kLfoPresets)
                 SendMessageW(pr, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(p.name));
             SendMessageW(pr, CB_SETCURSEL, 1, 0);   // bar wobble
+            setDlgLabel(dlg, IDC_MOD_STATUS,
+                L"An LFO swings a slider up and down by itself. Enter edits the chosen slider's "
+                L"sweeps; F1 explains.");
             SetFocus(GetDlgItem(dlg, IDC_MOD_LIST));
             return FALSE;
         }
@@ -2012,6 +2184,10 @@ INT_PTR MainWindow::modDialogHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
                 swprintf(m, 260, L"Added to %s: %s, depth %s, the whole song. Edit sweeps to change it.",
                          kSweepUi[k].name, p.name, dv);
                 setDlgLabel(dlg, IDC_MOD_STATUS, m);
+                return TRUE;
+            }
+            if (id == IDC_MOD_HELP) {
+                MessageBoxW(dlg, kModulationHelp, L"Modulation", MB_OK | MB_ICONINFORMATION);
                 return TRUE;
             }
             if (id == IDCANCEL) { EndDialog(dlg, id); return TRUE; }

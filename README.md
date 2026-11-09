@@ -283,8 +283,11 @@ How they behave, precisely:
   Starting a new song - New random pattern, Import legacy .cb, Start new track - clears
   the sweeps, since they named the old song's patterns.
 
-**The editor.** Pick a sweep by number, change it and press **Update**; **Add** makes a
-new one. A sweep whose end is before its start is refused with a reason (it could never
+**The editor.** Pick a sweep by number, change it and press **Update**. To make another,
+choose **(new sweep)**, the last entry in Sweep number: the fields start in the first range
+no sweep covers yet - after a sweep over patterns 1 to 4, pattern 5 - and **Add** adds it.
+**Help (F1)** explains sweeps and LFOs in full, and choosing an LFO wave says in the
+status line what it will do. A sweep whose end is before its start is refused with a reason (it could never
 play), as is one that overlaps another on the same slider. **Apply** (`Alt+Y`) lets you
 hear a change without closing: the sweep shown takes what the fields say, as Update does,
 and the slider's sweeps go to the engine at once. **F5-F8 work inside the editor** - and in
@@ -342,7 +345,8 @@ the selected slider's sweep editor; **LFO preset** (`Alt+P`) and **Add LFO to th
 song** (`Alt+A`) place a held, whole-song LFO on it - slow, bar, half-bar and beat wobbles,
 a trill, rising and falling saws, and *The old PWM LFO*. A preset's depth is a fraction of
 the slider's range, so one list serves every slider. What a preset makes is an ordinary
-LFO: edit it, save it in a `.hape`, or remove it in the sweep editor.
+LFO: edit it, save it in a `.hape`, or remove it in the sweep editor. **Help (F1)** there
+explains it all in plain words.
 
 **The PWM LFO this replaces** - one triangle at a rate in Hz, a depth into each PWM - opens
 from an older song as exactly that: a triangle LFO in Hz on Main PWM and on Duplet PWM, from

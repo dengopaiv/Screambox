@@ -185,6 +185,8 @@ private:
     // `owner` is the window the editor is modal to: the main window, or the
     // Oscillator or Acid FX dialog when Enter was pressed on one of theirs.
     void openSweepEditor(int sliderIdx, HWND owner = nullptr);
+    // A new sweep's value, at both ends: the slider's current setting.
+    int newSweepValue() const;
     // A label as it should read with the target's sweep count in it:
     // "&Gain:" becomes "&Gain (2 sweeps):". Empty count, label unchanged.
     std::wstring sweptLabel(const std::wstring& base, int target) const;

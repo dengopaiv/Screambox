@@ -143,7 +143,7 @@ END
 // (IDD_STEP_EDIT dialog removed — replaced by inline per-step controls
 //  in the main window.)
 
-IDD_SWEEP_EDIT DIALOGEX 0, 0, 360, 352
+IDD_SWEEP_EDIT DIALOGEX 0, 0, 360, 364
 STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Sweep editor"
 FONT 9, "Segoe UI", 400, 0, 0x0
@@ -203,12 +203,15 @@ BEGIN
     LTEXT           "Cycles (&x):",      IDC_STATIC,       170, 274, 34, 14
     COMBOBOX        IDC_SWEEP_CYCLES,    206, 272, 40, 160, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     PUSHBUTTON      "&Generate shape",   IDC_SWEEP_GENERATE, 254, 271, 90, 18, WS_TABSTOP
-    LTEXT           "",                  IDC_SWEEP_STATUS, 8, 296, 344, 28
+    // Three lines: it carries the explanations as well as the results.
+    LTEXT           "",                  IDC_SWEEP_STATUS, 8, 296, 344, 40
     // Apply sends the sweeps to the engine without closing, to hear a change
     // while the song plays; Cancel still undoes everything since opening.
-    DEFPUSHBUTTON   "OK",                IDOK,             186, 330, 50, 16, WS_TABSTOP
-    PUSHBUTTON      "Cancel",            IDCANCEL,         240, 330, 50, 16, WS_TABSTOP
-    PUSHBUTTON      "Appl&y",            IDC_SWEEP_APPLY,  294, 330, 50, 16, WS_TABSTOP
+    DEFPUSHBUTTON   "OK",                IDOK,             186, 342, 50, 16, WS_TABSTOP
+    PUSHBUTTON      "Cancel",            IDCANCEL,         240, 342, 50, 16, WS_TABSTOP
+    PUSHBUTTON      "Appl&y",            IDC_SWEEP_APPLY,  294, 342, 50, 16, WS_TABSTOP
+    // Sweeps and LFOs, explained. F1 anywhere in the editor does the same.
+    PUSHBUTTON      "Help (F1)",         IDC_SWEEP_HELP,   8,   342, 60, 16, WS_TABSTOP
 END
 
 // Modulation (TODO Y3): every sweep target in one list, each read with its
@@ -226,6 +229,7 @@ BEGIN
     LTEXT           "LFO &preset:",      IDC_STATIC,       8,   176, 50, 14
     COMBOBOX        IDC_MOD_PRESET,      60,  174, 232, 160, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     PUSHBUTTON      "&Add LFO to the whole song", IDC_MOD_ADD_LFO, 8, 196, 140, 18, WS_TABSTOP
+    PUSHBUTTON      "Help (F1)",         IDC_MOD_HELP,     152, 196, 76, 18, WS_TABSTOP
     PUSHBUTTON      "&Close",            IDCANCEL,         232, 196, 60, 18, WS_TABSTOP
     LTEXT           "",                  IDC_MOD_STATUS,   8,   220, 284, 24
 END

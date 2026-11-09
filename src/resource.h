@@ -173,6 +173,7 @@
 #define IDC_SWEEP_RATE              731
 #define IDC_SWEEP_RATE_UNIT         732
 #define IDC_SWEEP_APPLY             733
+#define IDC_SWEEP_HELP              734
 
 // Modulation dialog (TODO Y3)
 #define IDD_MODULATION              1000
@@ -181,6 +182,7 @@
 #define IDC_MOD_PRESET              1003
 #define IDC_MOD_ADD_LFO             1004
 #define IDC_MOD_STATUS              1005
+#define IDC_MOD_HELP                1006
 
 // Step-edit dialog
 #define IDD_STEP_EDIT               500
