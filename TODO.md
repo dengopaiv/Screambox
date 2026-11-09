@@ -68,8 +68,8 @@ through the question dialog:
 - **Y4: the whole program in C**, not only the engine. **C17** (Dengo, 2026-11-09 - it is
   what his other projects use; C23's gains here are cosmetic. The plan below was first
   written for C23 on clang-cl). **Sample-exact is the acceptance criterion.** PLANNED - see
-  *Y4 plan* - not started, and **the scope is under reconsideration**: see *Y4, the
-  calculus*.
+  *Y4 plan* - **SHELVED 2026-11-09** (Dengo): the program stays C++. See *Y4, the
+  calculus*; the plan stays on file in case it is ever revived.
 - **Order:** the tester first (BUILT, see Y4), then the oscillating sweeps in C++, then the
   C port against frozen reference renders.
 
@@ -442,7 +442,9 @@ weeks without an audible change, a freeze on features, and the 3,500-line interf
 accessibility work - rewritten with only checks and a screen reader to catch regressions.
 **Recommendation: do not port**; keep the C++, keep the tester (it protects C++ changes
 just as well), keep the plan below on file. If the port is ever wanted, the engine and
-files alone (phases 0-2) are the low-risk part. Awaiting Dengo's decision.
+files alone (phases 0-2) are the low-risk part. **Decided: shelved** (Dengo, 2026-11-09),
+and `rework` merged into `main`. The "nothing ships until the port is done" rule and the
+`cpp-final` fallback tag went with it.
 
 ## Y4 plan (written 2026-11-09 for C23 on clang-cl; the standard is now C17)
 
