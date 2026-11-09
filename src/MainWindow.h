@@ -20,6 +20,9 @@ public:
         int startPattern = 0, startStep = 0, startValue = 0;
         int endPattern   = 0, endStep   = 15, endValue  = 0;
         bool hold = false;   // keep the end value until the next sweep starts
+        // A wave (v15) makes it an LFO: it moves the value instead of setting
+        // it, and the two values are its depth. See CBEngine::SweepOsc.
+        CBEngine::SweepOsc osc;
     };
 
     bool create();
@@ -178,6 +181,7 @@ private:
     // A label as it should read with the target's sweep count in it:
     // "&Gain:" becomes "&Gain (2 sweeps):". Empty count, label unchanged.
     std::wstring sweptLabel(const std::wstring& base, int target) const;
+    std::wstring sweepCountSuffix(int target) const;
     static INT_PTR CALLBACK sweepEditorProc(HWND, UINT, WPARAM, LPARAM);
     INT_PTR sweepEditorHandler(HWND, UINT, WPARAM, LPARAM);
 
@@ -189,6 +193,14 @@ private:
     // Sets every slider label in the dialog: gain/tone/level say when Classic
     // makes them inert, and each says how many sweeps its slider carries.
     void refreshDistLabels(HWND dlg);
+
+    // Modulation dialog (TODO Y3): every sweep target in one list with its
+    // sweep and LFO counts, Enter to edit one, and LFO presets.
+    HWND hModButton_ = nullptr;
+    void openModulationDialog();
+    static INT_PTR CALLBACK modDialogProc(HWND, UINT, WPARAM, LPARAM);
+    INT_PTR modDialogHandler(HWND, UINT, WPARAM, LPARAM);
+    void refreshModList(HWND dlg);
 
     // Oscillator parameter dialog (PWM, sub, duplet, reset-to-303).
     HWND hOscButton_ = nullptr;

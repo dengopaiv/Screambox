@@ -118,6 +118,8 @@ BEGIN
     "P",        IDM_PATTERN_NEW,        VIRTKEY, CONTROL, SHIFT
     VK_DELETE,  IDM_PATTERN_DELETE,     VIRTKEY, CONTROL, SHIFT
     "D",        IDM_OPEN_DISTORTION,    VIRTKEY, CONTROL
+    // Ctrl+M: no letter of "Modulation" is free on the main window.
+    "M",        IDM_OPEN_MODULATION,    VIRTKEY, CONTROL
     // Ctrl+T, not a mnemonic: every letter of "Triplet feel" is taken, and
     // this is a control worth reaching without hunting for it.
     "T",        IDM_PATTERN_TRIPLET,    VIRTKEY, CONTROL
@@ -141,7 +143,7 @@ END
 // (IDD_STEP_EDIT dialog removed — replaced by inline per-step controls
 //  in the main window.)
 
-IDD_SWEEP_EDIT DIALOGEX 0, 0, 360, 306
+IDD_SWEEP_EDIT DIALOGEX 0, 0, 360, 352
 STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Sweep editor"
 FONT 9, "Segoe UI", 400, 0, 0x0
@@ -154,7 +156,7 @@ BEGIN
     COMBOBOX        IDC_SWEEP_START_PATTERN, 80, 66, 60, 160, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     LTEXT           "Start s&tep:",      IDC_STATIC, 150, 68, 50, 14
     COMBOBOX        IDC_SWEEP_START_STEP, 200, 66, 60, 160, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "Start &value:",     IDC_STATIC, 8, 92, 70, 14
+    LTEXT           "Start &value:",     IDC_SWEEP_START_VALUE_CAP, 8, 92, 70, 14
     CONTROL         "", IDC_SWEEP_START_VALUE, "msctls_trackbar32",
                     TBS_HORZ | TBS_AUTOTICKS | WS_TABSTOP, 80, 90, 180, 18
     LTEXT           "+0%",               IDC_SWEEP_START_VALUE_LBL, 264, 92, 80, 14
@@ -164,36 +166,66 @@ BEGIN
     COMBOBOX        IDC_SWEEP_END_PATTERN, 80, 114, 60, 160, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     LTEXT           "End st&ep:",        IDC_STATIC, 150, 116, 50, 14
     COMBOBOX        IDC_SWEEP_END_STEP,  200, 114, 60, 160, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "End va&lue:",       IDC_STATIC, 8, 140, 70, 14
+    LTEXT           "End va&lue:",       IDC_SWEEP_END_VALUE_CAP, 8, 140, 70, 14
     CONTROL         "", IDC_SWEEP_END_VALUE, "msctls_trackbar32",
                     TBS_HORZ | TBS_AUTOTICKS | WS_TABSTOP, 80, 138, 180, 18
     LTEXT           "+0%",               IDC_SWEEP_END_VALUE_LBL, 264, 140, 80, 14
     // Off = snap back to the slider when the sweep ends (the original).
     AUTOCHECKBOX    "&Hold the end value until the next sweep", IDC_SWEEP_HOLD, 80, 160, 270, 12, WS_TABSTOP
+    // Oscillation (.roq v15): with a wave chosen the sweep is an LFO - it moves
+    // the value around the slider (or a straight sweep) instead of replacing
+    // it, and the two values above become its depth. The labels say so.
+    LTEXT           "LFO &wave:",        IDC_STATIC,       8,   178, 70, 14
+    COMBOBOX        IDC_SWEEP_WAVE,      80,  176, 110, 120, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Start&ing phase (degrees):", IDC_STATIC, 198, 178, 98, 14
+    EDITTEXT        IDC_SWEEP_PHASE,     298, 176, 40, 14, ES_NUMBER | ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT           "Fre&quency:",       IDC_STATIC,       8,   200, 70, 14
+    EDITTEXT        IDC_SWEEP_RATE,      80,  198, 50, 14, ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT           "&Measured in:",     IDC_STATIC,       138, 200, 56, 14
+    COMBOBOX        IDC_SWEEP_RATE_UNIT, 198, 198, 150, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
 
-    PUSHBUTTON      "&Add",              IDC_SWEEP_ADD,    8,   180, 60, 18, WS_TABSTOP
-    PUSHBUTTON      "&Update",           IDC_SWEEP_UPDATE, 72,  180, 60, 18, WS_TABSTOP
-    PUSHBUTTON      "&Remove",           IDC_SWEEP_REMOVE, 136, 180, 60, 18, WS_TABSTOP
-    PUSHBUTTON      "&Copy",             IDC_SWEEP_COPY,   200, 180, 60, 18, WS_TABSTOP
+    PUSHBUTTON      "&Add",              IDC_SWEEP_ADD,    8,   226, 60, 18, WS_TABSTOP
+    PUSHBUTTON      "&Update",           IDC_SWEEP_UPDATE, 72,  226, 60, 18, WS_TABSTOP
+    PUSHBUTTON      "&Remove",           IDC_SWEEP_REMOVE, 136, 226, 60, 18, WS_TABSTOP
+    PUSHBUTTON      "&Copy",             IDC_SWEEP_COPY,   200, 226, 60, 18, WS_TABSTOP
     // Pa&ste, not Pas&te: T belongs to "Start s&tep". S was free once "Save
     // to file" moved to F.
-    PUSHBUTTON      "Pa&ste",            IDC_SWEEP_PASTE,  264, 180, 60, 18, WS_TABSTOP
-    PUSHBUTTON      "Save to &file...",  IDC_SWEEP_SAVE,   8,   202, 90, 18, WS_TABSTOP
-    PUSHBUTTON      "L&oad from file...", IDC_SWEEP_LOAD,  102, 202, 90, 18, WS_TABSTOP
+    PUSHBUTTON      "Pa&ste",            IDC_SWEEP_PASTE,  264, 226, 60, 18, WS_TABSTOP
+    PUSHBUTTON      "Save to &file...",  IDC_SWEEP_SAVE,   8,   248, 90, 18, WS_TABSTOP
+    PUSHBUTTON      "L&oad from file...", IDC_SWEEP_LOAD,  102, 248, 90, 18, WS_TABSTOP
     // Shapes: fills the range above (start to end, start value to end value)
     // with ordinary sweeps drawing the chosen shape, repeated. Nothing new
     // reaches the engine or the file - the result is plain sweeps.
-    LTEXT           "Shape &kind:",      IDC_STATIC,       8,   228, 46, 14
-    COMBOBOX        IDC_SWEEP_SHAPE,     56,  226, 110, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "C&ycles:",          IDC_STATIC,       174, 228, 30, 14
-    COMBOBOX        IDC_SWEEP_CYCLES,    206, 226, 40, 160, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    PUSHBUTTON      "&Generate shape",   IDC_SWEEP_GENERATE, 254, 225, 90, 18, WS_TABSTOP
-    LTEXT           "",                  IDC_SWEEP_STATUS, 8, 250, 344, 28
-    DEFPUSHBUTTON   "OK",                IDOK,             240, 284, 50, 16, WS_TABSTOP
-    PUSHBUTTON      "Cancel",            IDCANCEL,         294, 284, 50, 16, WS_TABSTOP
+    LTEXT           "Shape &kind:",      IDC_STATIC,       8,   274, 46, 14
+    COMBOBOX        IDC_SWEEP_SHAPE,     56,  272, 110, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "C&ycles:",          IDC_STATIC,       174, 274, 30, 14
+    COMBOBOX        IDC_SWEEP_CYCLES,    206, 272, 40, 160, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON      "&Generate shape",   IDC_SWEEP_GENERATE, 254, 271, 90, 18, WS_TABSTOP
+    LTEXT           "",                  IDC_SWEEP_STATUS, 8, 296, 344, 28
+    DEFPUSHBUTTON   "OK",                IDOK,             240, 330, 50, 16, WS_TABSTOP
+    PUSHBUTTON      "Cancel",            IDCANCEL,         294, 330, 50, 16, WS_TABSTOP
 END
 
-IDD_OSCILLATOR DIALOGEX 0, 0, 300, 314
+// Modulation (TODO Y3): every sweep target in one list, each read with its
+// count of sweeps and LFOs, and LFO presets that place a whole-song LFO on
+// the chosen target. Enter on the list opens that target's sweep editor, as
+// Enter on its slider does - which is why Edit is the default button.
+IDD_MODULATION DIALOGEX 0, 0, 300, 250
+STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Modulation"
+FONT 9, "Segoe UI", 400, 0, 0x0
+BEGIN
+    LTEXT           "&Targets and their sweeps:", IDC_STATIC, 8, 8, 200, 12
+    LISTBOX         IDC_MOD_LIST,        8,   22, 284, 120, LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_TABSTOP
+    DEFPUSHBUTTON   "&Edit sweeps...",   IDC_MOD_EDIT,     8,   148, 90, 18, WS_TABSTOP
+    LTEXT           "LFO &preset:",      IDC_STATIC,       8,   176, 50, 14
+    COMBOBOX        IDC_MOD_PRESET,      60,  174, 232, 160, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON      "&Add LFO to the whole song", IDC_MOD_ADD_LFO, 8, 196, 140, 18, WS_TABSTOP
+    PUSHBUTTON      "&Close",            IDCANCEL,         232, 196, 60, 18, WS_TABSTOP
+    LTEXT           "",                  IDC_MOD_STATUS,   8,   220, 284, 24
+END
+
+IDD_OSCILLATOR DIALOGEX 0, 0, 300, 230
 STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Oscillator"
 FONT 9, "Segoe UI", 400, 0, 0x0
@@ -229,22 +261,10 @@ BEGIN
                     TBS_HORZ | TBS_AUTOTICKS | WS_TABSTOP, 80, 164, 160, 18
     LTEXT           "0%",                      IDC_OSC_DUP_LEVEL_VALUE, 246, 166, 40, 14
 
-    GROUPBOX        "PWM LFO (triangle, free-running)", IDC_STATIC, 8, 192, 284, 84
-    LTEXT           "&Rate:",                  IDC_OSC_LFO_RATE_LABEL, 16, 210, 150, 14
-    CONTROL         "", IDC_OSC_LFO_RATE, "msctls_trackbar32",
-                    TBS_HORZ | TBS_AUTOTICKS | WS_TABSTOP, 170, 208, 76, 18
-    LTEXT           "off",                     IDC_OSC_LFO_RATE_VALUE, 250, 210, 40, 14
-    LTEXT           "&Main depth:",            IDC_OSC_LFO_MAIN_LABEL, 16, 232, 150, 14
-    CONTROL         "", IDC_OSC_LFO_MAIN, "msctls_trackbar32",
-                    TBS_HORZ | TBS_AUTOTICKS | WS_TABSTOP, 170, 230, 76, 18
-    LTEXT           "0%",                      IDC_OSC_LFO_MAIN_VALUE, 250, 232, 40, 14
-    LTEXT           "D&uplet depth:",          IDC_OSC_LFO_DUP_LABEL, 16, 254, 150, 14
-    CONTROL         "", IDC_OSC_LFO_DUP, "msctls_trackbar32",
-                    TBS_HORZ | TBS_AUTOTICKS | WS_TABSTOP, 170, 252, 76, 18
-    LTEXT           "0%",                      IDC_OSC_LFO_DUP_VALUE, 250, 254, 40, 14
-
-    PUSHBUTTON      "Everybody &needs a 303",  IDC_OSC_RESET_303, 10, 286, 140, 18, WS_TABSTOP
-    DEFPUSHBUTTON   "&Close",                  IDOK, 230, 286, 60, 18, WS_TABSTOP
+    // The PWM LFO group that sat here is an oscillating sweep now (.roq v15,
+    // TODO Y3): Enter on Main PWM or on the duplet's PWM, then LFO wave.
+    PUSHBUTTON      "Everybody &needs a 303",  IDC_OSC_RESET_303, 10, 202, 140, 18, WS_TABSTOP
+    DEFPUSHBUTTON   "&Close",                  IDOK, 230, 202, 60, 18, WS_TABSTOP
 END
 
 VS_VERSION_INFO VERSIONINFO

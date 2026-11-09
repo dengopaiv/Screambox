@@ -46,6 +46,7 @@
 #define IDM_PATTERN_NEW             242
 #define IDM_PATTERN_DELETE          243
 #define IDM_OPEN_DISTORTION         226
+#define IDM_OPEN_MODULATION         227
 #define IDM_HELP_KEYS               230
 #define IDM_HELP_ABOUT              231
 
@@ -53,6 +54,7 @@
 #define IDC_WAVEFORM                300
 #define IDC_OSC_BUTTON              305
 #define IDC_DIST_BUTTON             306
+#define IDC_MOD_BUTTON              307
 #define IDC_TEMPO                   301
 #define IDC_OCTAVE                  302
 #define IDC_RANDOM                  303
@@ -107,16 +109,7 @@
 #define IDC_OSC_DUP_PWM             816
 #define IDC_OSC_DUP_PWM_LABEL       817
 #define IDC_OSC_DUP_PWM_VALUE       818
-// Shared PWM LFO: one rate, one depth per destination.
-#define IDC_OSC_LFO_RATE            819
-#define IDC_OSC_LFO_RATE_LABEL      820
-#define IDC_OSC_LFO_RATE_VALUE      821
-#define IDC_OSC_LFO_MAIN            822
-#define IDC_OSC_LFO_MAIN_LABEL      823
-#define IDC_OSC_LFO_MAIN_VALUE      824
-#define IDC_OSC_LFO_DUP             825
-#define IDC_OSC_LFO_DUP_LABEL       826
-#define IDC_OSC_LFO_DUP_VALUE       827
+// 819..827 were the PWM LFO's controls, retired in v15 (TODO Y3).
 #define IDC_OSC_NOISE               828
 #define IDC_OSC_NOISE_LABEL         829
 #define IDC_OSC_NOISE_VALUE         830
@@ -172,6 +165,21 @@
 #define IDC_SWEEP_SHAPE             724
 #define IDC_SWEEP_CYCLES            725
 #define IDC_SWEEP_GENERATE          726
+// Oscillation (v15): an LFO is a sweep with a wave.
+#define IDC_SWEEP_START_VALUE_CAP   727
+#define IDC_SWEEP_END_VALUE_CAP     728
+#define IDC_SWEEP_WAVE              729
+#define IDC_SWEEP_PHASE             730
+#define IDC_SWEEP_RATE              731
+#define IDC_SWEEP_RATE_UNIT         732
+
+// Modulation dialog (TODO Y3)
+#define IDD_MODULATION              1000
+#define IDC_MOD_LIST                1001
+#define IDC_MOD_EDIT                1002
+#define IDC_MOD_PRESET              1003
+#define IDC_MOD_ADD_LFO             1004
+#define IDC_MOD_STATUS              1005
 
 // Step-edit dialog
 #define IDD_STEP_EDIT               500

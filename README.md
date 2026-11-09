@@ -3,8 +3,8 @@
 **Screambox is built on CreakBox.** A standalone Windows bassline synth and step sequencer,
 built to be **fully usable from the keyboard and by a screen reader**. It started from a
 TB-303-style voice and still has one at its core, but it has grown well past imitating
-the 303 — variable-length and triplet patterns, reverse step, a PWM LFO, noise, and an
-acid FX block are all things the original box never had.
+the 303 — variable-length and triplet patterns, reverse step, sweeps and LFOs on every
+slider, noise, and an acid FX block are all things the original box never had.
 
 The DSP is the original 2002–2004 Frank Reitz ("Bass Assessor") CreakBox / SilverBox
 engine, lifted verbatim. What was rewritten is everything around it: the VST plumbing
@@ -99,10 +99,10 @@ case the system cannot infer on its own.
 Three consequences worth internalising before touching the UI:
 
 1. **Don't grey out a control to signal "inert".** A disabled control announces as
-   *unavailable* with no discoverable reason. Say it in the label instead. The oscillator
-   dialog does this: when the main waveform is a saw, the PWM LFO depth label retitles
-   itself to note that it currently has no effect — the control stays reachable and stays
-   explicable.
+   *unavailable* with no discoverable reason. Say it in the label instead. The Acid FX
+   dialog does this: while the distortion type is Classic, the gain, tone and level labels
+   retitle themselves to say they currently have no effect — the controls stay reachable
+   and stay explicable.
 2. **Programmatic text changes must go through `announceValue()`**, which sets the text
    and then fires `EVENT_OBJECT_NAMECHANGE` / `EVENT_OBJECT_VALUECHANGE`. Calling
    `SetWindowText` directly leaves a screen reader reading stale state.
@@ -131,6 +131,7 @@ Three consequences worth internalising before touching the UI:
 | Step editor | One step selector + pitch combo (Rest, C0–B4) + slide / accent / reverse-step checkboxes |
 | Oscillator… | Opens the oscillator dialog |
 | Acid FX… | Opens the FX dialog — distortion, compressor, ring modulator. `Alt+X` or `Ctrl+D`. |
+| Modulation… | Every sweepable slider in one list with its sweeps and LFOs, and LFO presets. `Ctrl+M`. See *LFOs*. |
 
 **Press Enter on any of the seven parameter sliders, or on Accent squelch, to open its sweep
 editor.** The sliders in the Oscillator and Acid FX dialogs work the same way.
@@ -148,8 +149,10 @@ Everything here is beyond the stock 303, and everything defaults to transparent.
   weak down there. A raw hiss layer on top would be a different (post-filter) feature.
 - **Duplet** — a second oscillator with its own waveform, its own PWM, ±1200 cents detune
   and its own level. Default level 0.
-- **PWM LFO (triangle, free-running)** — one shared rate, an independent depth into the
-  main PWM and into the duplet PWM. See below.
+- **The PWM LFO that used to sit here** is an LFO on Main PWM and on the duplet's PWM now
+  (`.roq` v15): press **Enter** on either slider and choose an **LFO wave**, or use the
+  Modulation dialog's *The old PWM LFO* preset. A song that used it opens with it converted
+  and sounds the same. See *LFOs* below.
 - **"Everybody needs a 303"** — resets **every sound parameter** to stock voicing, the
   main-window sliders included, not just this dialog. It leaves patterns, sweeps and
   transport state alone, and it deliberately does **not** touch per-step reverse flags:
@@ -189,7 +192,7 @@ its value to a screen reader, so the sense is corrected here.
 
 **The knobs stay enabled while Classic is selected**, and say so in their labels instead
 (`Gain (no effect — Classic)`). Disabling them would announce as *unavailable* with no
-discoverable cause — the same rule the PWM LFO depth labels follow.
+discoverable cause — the accessibility rule above.
 
 **On levels.** At the default gain of 0 the models sit between 0.3× and 1.7× the Classic
 output, so picking one is not a volume jump. Wind the gain up and hard clipping does what
@@ -228,9 +231,9 @@ rule forbids; restarting gives every note the same timbre instead of one that la
 differently each time; and starting at the carrier's peak rather than at a zero crossing
 keeps the note's attack transient intact. Tied notes keep the phase they started with.
 
-Note the deliberate contrast with the PWM LFO, whose phase must **never** be reset: that one
-is a slow modulator whose whole point is drifting across the bar, at a rate where drift is
-audible *as* drift.
+Note the deliberate contrast with an LFO's phase, which is never reset at a note or a bar:
+that one is a slow modulator whose whole point is moving across the bar, at a rate where
+movement is audible *as* movement. It follows the song position instead (see *LFOs*).
 
 Amount at 0 skips the multiply entirely, and the frequency label says so.
 
@@ -268,10 +271,9 @@ How they behave, precisely:
 - **A swept slider says so in its name** - `Cutoff (2 sweeps)`, `Gain (1 sweep)` - which
   is what a screen reader reads on focus, since moving it does nothing a sweep will not
   override at the next step.
-- **Frequencies glide in equal ratios.** PWM LFO rate and Ring frequency sweep
-  geometrically - 1 Hz to 16 Hz passes 2, 4 and 8 at even spacing - which is what moving
-  their exponential sliders at an even speed does. A rate sweep to or from *off* glides
-  from or to the slowest rate, 0.05 Hz, and is off only at the endpoint that says so.
+- **Frequencies glide in equal ratios.** Ring frequency sweeps geometrically - 100 Hz to
+  1600 Hz passes 200, 400 and 800 at even spacing - which is what moving its exponential
+  slider at an even speed does.
 - **A sweep can switch an effect on.** Compressor depth and Ring amount are "off" at 0, and
   a sweep that raises them turns the effect on for as long as it does - while the slider,
   and the label that says "no effect", go on describing the slider.
@@ -301,20 +303,48 @@ What Generate adds are ordinary sweeps - as few straight ones as draw the shape 
 one value per step - so each piece can be edited, removed or copied like any other, and
 nothing about a shape reaches the engine or the file. The shape is refused, with a reason,
 if it would overlap a sweep already there, or if the range is too short for that many
-cycles. Hold, if ticked, applies to the shape's last piece. This is how a step-rate
-"LFO" is made: Up and down, 8 cycles, across the patterns it should run over.
+cycles. Hold, if ticked, applies to the shape's last piece. Where you want one editable
+record instead of many pieces, use an LFO.
 
-**There is deliberately no general-purpose LFO.** Sweeps cover that ground, and cover it
-with musical structure an LFO does not have.
+### LFOs — sweeps that oscillate
 
-The **PWM LFO is the single exception**, and the reason is structural rather than
-stylistic: sweeps are evaluated once per sequencer step, which puts their ceiling around
-10 Hz even at fast tempos, and they move in stairsteps. Per-sample duty-cycle modulation
-up to 100 Hz is simply a different mechanism. It is free-running by design — the phase
-survives pattern boundaries rather than relocking every bar. Its rate is stored in Hz
-everywhere (engine and file), never as a slider position, so the UI's exponential taper
-(0.05 – 100 Hz across positions 1–100, position 0 being an off detent) can change later
-without repitching saved songs.
+There is no separate LFO module: **an LFO is a sweep with a wave** (`.roq` v15). Choose an
+**LFO wave** (`Alt+W`) in the sweep editor - triangle, sine, square, saw up, saw down - and
+the sweep stops setting the value and starts *moving* it:
+
+- **It moves the value around whatever the slider would otherwise be** - the slider itself,
+  or a straight sweep covering the same step. So a ramp and a wobble run at once: a Cutoff
+  sweep from 10 to 70 with a sine LFO on top wobbles around the rising ramp. One straight
+  sweep and one LFO may cover the same step; they never count as overlapping each other.
+- **The two values become its depth** (the captions say *Start depth* and *End depth*),
+  travelling from one to the other along the sweep as a straight sweep's value does - an
+  LFO that fades in. The result stays inside the slider's range.
+- **Frequency** (`Alt+Q`), **Measured in** (`Alt+M`) **steps per cycle**, which follows the
+  tempo, or **Hz**, which does not; and the **Starting phase** in degrees (`Alt+I`). Every
+  wave starts at its centre going up (the square at its top), so 0 means the same for all.
+- **Hold** keeps it going at its end depth until the next LFO on that slider. An LFO that
+  starts at the top of the song and holds is "always on", including through patterns added
+  later.
+- **Its phase follows the song position, not a free-running clock.** Every play of a song
+  and every WAV export of it sound the same, and a looped pattern repeats exactly.
+- **Main PWM and Duplet PWM move every sample**, so an LFO there runs smoothly up to audio
+  rates - what the old PWM LFO did. **Every other slider moves once per step**, like any
+  sweep: an LFO there is sampled at the step rate, and a fast one comes out in stairs.
+
+**The Modulation dialog** (`Ctrl+M`, or the *Modulation* button) lists every slider that
+can be swept, each read with what it carries - `Cutoff (2 sweeps, 1 LFO)`. **Enter** opens
+the selected slider's sweep editor; **LFO preset** (`Alt+P`) and **Add LFO to the whole
+song** (`Alt+A`) place a held, whole-song LFO on it - slow, bar, half-bar and beat wobbles,
+a trill, rising and falling saws, and *The old PWM LFO*. A preset's depth is a fraction of
+the slider's range, so one list serves every slider. What a preset makes is an ordinary
+LFO: edit it, save it in a `.hape`, or remove it in the sweep editor.
+
+**The PWM LFO this replaces** - one triangle at a rate in Hz, a depth into each PWM - opens
+from an older song as exactly that: a triangle LFO in Hz on Main PWM and on Duplet PWM, from
+the top of the song, holding. Rendered from the start, as a WAV export renders, it is
+**bit-identical** to the old LFO (the tester proves it on songs the old build saved). It
+differs on purpose after the song wraps back to pattern 1: the old LFO ran free, so every
+play caught it somewhere else; the new one starts again with the song.
 
 ### Resonance boost
 
@@ -579,6 +609,7 @@ is the **step line**, which grows by appending tokens rather than changing shape
 | 12 | per-pattern triplet, as a second token on the pattern's `lastStep` line. **Written only when some pattern uses it**, and readable by older builds either way. |
 | 13 | per-sweep "hold end value", as an eighth token on the sweep line. **Written only when some sweep holds.** An older build reading the line takes the first seven tokens and simply does not hold. |
 | 14 | sweeps on Accent squelch and the Oscillator and Acid FX sliders - sweep targets 7 to 23 (listed in `CBEngine.h`). Not a byte of the layout changed; it is a version because an older build *silently drops* a sweep whose target is above 6, and would play the song without it. **Written only when some sweep has such a target**, so an older build refuses the song out loud instead. |
+| 15 | LFOs: four tokens after the hold token on an oscillating sweep's line - wave, rate unit (0 steps per cycle, 1 Hz), rate, starting phase in cycles. **Written only when some sweep oscillates**; an older build would play one as a straight sweep between its two depths. The same version retires the PWM LFO: its three header lines stay (the header is positional) and are written as 0, and a song that used it opens with it converted. Sweep targets 14 to 16 (the LFO's own rate and depths) were retired with it before any release carried them. |
 
 The v8 step line is `pitch slide accent reverse`. Adding a token rather than changing the
 line's shape is what keeps it readable in both directions: an older three-token parser
@@ -589,8 +620,9 @@ extracts the first three and ignores the rest.
 A sweep collection on its own, for reusing a set of sweeps across songs. Magic
 `CreakboxHape`. Saved and loaded from inside the sweep editor. Stamped 9 - readable by any
 build - unless a sweep in it holds its end value, which stamps 13 and adds the hold token,
-the same "what the file needs" rule `.roq` follows. v14's new sweep targets do not raise
-it: the editor keeps only the sweeps for the slider being edited and says how many it
+the same "what the file needs" rule `.roq` follows; one carrying an LFO is stamped 15,
+since an older build would keep it and play it as a straight sweep. v14's new sweep targets
+do not raise it: the editor keeps only the sweeps for the slider being edited and says how many it
 skipped, so an older build handed a squelch sweep reports it skipped rather than
 misplaying anything.
 
@@ -633,7 +665,7 @@ pattern · `Ctrl+E` random (nicely) · `Ctrl+R` random (retro 2002) · `Ctrl+Shi
 
 **Step flags, from anywhere** — `Alt+A` accent · `Alt+S` slide · `Alt+I` reverse step
 
-**Dialogs** — `Ctrl+D` distortion panel
+**Dialogs** — `Ctrl+D` distortion panel · `Ctrl+M` modulation
 
 **Pattern** — `Ctrl+Left` previous · `Ctrl+Right` next · `Ctrl+Shift+P` new ·
 `Ctrl+Shift+Del` delete
@@ -676,7 +708,8 @@ main window is now unique:
 | `Alt+T` Step selector | `Alt+N` Note | `Alt+A` Accent | `Alt+S` Resonance |
 | `Alt+R` Run/Stop | `Alt+G` Pattern length | | |
 
-**Triplet feel** has no mnemonic — every letter of it is taken — and lives on `Ctrl+T`.
+**Triplet feel** has no mnemonic — every letter of it is taken — and lives on `Ctrl+T`;
+**Modulation…** likewise, on `Ctrl+M`.
 
 Several moved off their first letter to break a collision, which is why they read oddly:
 **Te&#95;m&#95;po**, **Deca&#95;y&#95;**, **T&#95;u&#95;ning**, **W&#95;i&#95;ldness** and
@@ -757,10 +790,10 @@ ThreadSanitizer would have verified if MSVC shipped it.
 These are load-bearing. Breaking one is silent — nothing fails to compile and nothing
 throws.
 
-1. **`resetFilters()` must not touch `pwmLfoPhase_`.** It zeroes the oscillator phases
-   and runs at every pattern start. Adding the LFO phase there — which is exactly where
-   it looks like it belongs — silently converts a free-running LFO into a per-pattern
-   retrigger.
+1. **`resetFilters()` must not touch the LFOs' phases (`osc_`).** It zeroes the
+   oscillator phases and runs at every pattern start. Adding the LFO phases there — which
+   is exactly where they look like they belong — silently converts every LFO into a
+   per-pattern retrigger. Their phase belongs to the song position.
 2. **`wwelti_IIR_IIRlp3pole` stays byte-for-byte as it is.** New filter behaviour goes
    into a sibling function. The stock path being unedited is the proof that the stock
    sound is unchanged.
@@ -773,7 +806,8 @@ throws.
    engine reconstructed by reversing the patch — render both headlessly, and compare the
    bytes. The PWM LFO round and the noise / boost / reverse round were both verified this
    way, and the current build with every addition switched off is still bit-identical to
-   the original pre-LFO engine.
+   the original pre-LFO engine. Since 2026-11-09 `tools/check_sound.py` makes the
+   comparison one command (see `CLAUDE.md`).
 5. **Skip work entirely when a feature is off**, rather than multiplying by a neutral
    value. The noise RNG must not advance at level 0, and neither the compressor's follower
    nor the ring carrier's phase may advance at amount 0 — otherwise invariant 4 stops
@@ -783,8 +817,9 @@ throws.
    forever and would stop a one-pattern loop repeating identically. The compressor's
    envelope follower is deliberately *not* reset at pattern start, because a one-pole
    contracts — it converges within a fraction of a loop from any state, and resetting it
-   would manufacture a burst of make-up gain on beat 1 of every bar. The PWM LFO is the
-   third case: free-running on purpose, and resetting it is the documented trap.
+   would manufacture a burst of make-up gain on beat 1 of every bar. The LFOs are the
+   third case: their phase is a function of the song position, taken afresh only where
+   playback jumps (Play, a loop, the wrap to pattern 1) and accumulated in between.
 
 ---
 

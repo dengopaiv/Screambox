@@ -59,13 +59,15 @@ enum class CbParam {
     DupletPWM,      // 0..1, default 0.5 = 50 % duty for the DUPLET square (independent of main PWM).
     DupletDetune,   // -1..+1 → ±1200 cents detune for the duplet oscillator.
     DupletLevel,    // 0..1, default 0 = off. Mix level for the duplet.
-    // One shared triangle LFO driving both PWM destinations: a single rate,
-    // an independent depth per destination. Sweeps are evaluated once per
-    // sequencer step and top out near 10 Hz, so they cannot reach these
-    // rates — this is the engine's only continuous per-sample modulator.
-    PwmLfoRate,        // 0..100, stored as Hz. 0 = off. Taper lives in the UI.
-    PwmLfoDepth,       // 0..1, default 0 = off. Depth into the MAIN PWM.
-    PwmLfoDupletDepth, // 0..1, default 0 = off. Depth into the DUPLET PWM.
+    // RETIRED (.roq v15, TODO Y3). These were the shared triangle PWM LFO:
+    // one rate in Hz, one depth per PWM destination. The LFO is now an
+    // oscillating sweep on Main PWM and Duplet PWM; loadRoq() folds a
+    // pre-v15 song's three values into such sweeps and zeroes them, and the
+    // engine reads none of the three. They keep their slots because the enum
+    // is mirrored in tests/sb_api.h and the .roq header is positional.
+    PwmLfoRate,
+    PwmLfoDepth,
+    PwmLfoDupletDepth,
     NoiseLevel,     // 0..1, default 0 = off. White noise mixed into the
                     // oscillator sum, so it is shaped by the filter and gate.
     ResoBoost,      // 0 / 1, default 0. Lifts the top of the resonance range
@@ -159,8 +161,9 @@ public:
     //    8 PWM, 9 Sub level, 10 Noise, 11 Duplet PWM      (percent, 0..100)
     //   12 Duplet detune           (cents, -1200..+1200)
     //   13 Duplet level            (percent)
-    //   14 PWM LFO rate            (thousandths of a Hz, 0 = off)
-    //   15 LFO main depth, 16 LFO duplet depth            (percent)
+    //   14 PWM LFO rate, 15 LFO main depth, 16 LFO duplet depth - RETIRED in
+    //      v15 with the LFO itself, before any release carried them. The
+    //      numbers stay taken; loadRoq() drops sweeps on them.
     //   17 Dist gain, 18 Dist tone, 19 Dist level         (percent)
     //   20 Comp threshold, 21 Comp depth                  (percent)
     //   22 Ring frequency          (hundredths of a Hz)
@@ -174,6 +177,48 @@ public:
     static constexpr int kMainSweepTargets = 7;    // the original seven
     static constexpr int kSweepTargets     = 24;   // all of them
     static CbParam sweepTargetParam(int idx);
+    // 14..16, the PWM LFO's own controls: never released, retired in v15.
+    static bool sweepTargetRetired(int idx) { return idx >= 14 && idx <= 16; }
+    // Targets whose oscillation is computed every SAMPLE rather than once per
+    // step - see SweepOsc. Main PWM and Duplet PWM, which is where the PWM
+    // LFO lived and what it did.
+    static bool sweepTargetPerSample(int idx) { return idx == 8 || idx == 11; }
+
+    // An OSCILLATING sweep (.roq v15, TODO Y3) - how the PWM LFO, and any
+    // other LFO, is expressed. With shape None a sweep is the straight line
+    // it always was. With a shape:
+    //   - it does not replace the target's value, it MOVES it: the wave is
+    //     added to whatever the target would otherwise be - the slider, or a
+    //     straight sweep covering the same step. That is what the PWM LFO did
+    //     (it wobbled around the PWM slider, swept or not), and it is what
+    //     lets a ramp and a wobble run at once.
+    //   - startVal / endVal are its DEPTH, in the target's stored units, and
+    //     the depth travels from one to the other along the sweep exactly as
+    //     a straight sweep's value does - a vibrato that fades in.
+    //   - Hold keeps it oscillating at its end depth until the next
+    //     oscillating sweep on that target starts. An LFO is an oscillating
+    //     sweep that starts at the top of the song and holds.
+    //   - Straight and oscillating sweeps are chosen separately - one of each
+    //     can cover a step, and neither counts as overlapping the other.
+    // The PHASE is a function of the song position, never free-running: in
+    // steps mode, steps since the sweep started over steps per cycle; in Hz
+    // mode, an accumulator that is re-derived from the samples since the
+    // sweep started whenever playback does not simply move on to the next
+    // step (Play, a jump, the wrap back to pattern 1, a loop). So every play
+    // of a song and every export of it sound the same.
+    // Evaluated once per step, like any sweep, except for the per-sample
+    // targets above, whose wave moves within the step.
+    enum class OscShape : int { None = 0, Triangle, Sine, Square, SawUp, SawDown, Count };
+    struct SweepOsc {
+        int   shape = 0;      // OscShape
+        bool  hz    = false;  // rate unit: false = steps per cycle, true = Hz
+        float rate  = 0.0f;   // steps per cycle or Hz; <= 0 holds the start phase
+        float phase = 0.0f;   // start phase, in cycles (0.25 = a quarter in)
+        bool on() const { return shape > 0 && shape < (int)OscShape::Count; }
+        bool operator==(const SweepOsc& o) const {
+            return shape == o.shape && hz == o.hz && rate == o.rate && phase == o.phase;
+        }
+    };
     struct ParamSweep {
         int startPat = 0, startStep = 0, startVal = 0;
         int endPat   = 0, endStep   = 15, endVal  = 0;
@@ -181,6 +226,7 @@ public:
         // same slider starts, instead of snapping back to the slider. Off is
         // the original behaviour.
         bool hold = false;
+        SweepOsc osc;   // shape None: an ordinary sweep
     };
     void setParamSweeps(int sliderIdx, const std::vector<ParamSweep>& sweeps);
 
@@ -364,11 +410,34 @@ private:
     double boxOsc_ = 0.0;
     double dupletOsc_ = 0.0;   // independent phase accumulator for duplet voice
     double subOscPhase_ = 0.0; // phase accumulator for sine sub oscillator
-    // PWM LFO phase, 0..1. FREE-RUNNING BY DESIGN — deliberately NOT reset in
-    // resetFilters() alongside the oscillator phases above, so the modulation
-    // drifts across pattern boundaries instead of relocking every bar.
-    // Resetting it here would silently turn this into a per-pattern retrigger.
-    double pwmLfoPhase_ = 0.0;
+    // The oscillating sweep running on each target, if any (see SweepOsc).
+    // Chosen at every step boundary by evaluateSweeps; cleared on stop and
+    // start. NOT touched by resetFilters(): the phase belongs to the song
+    // position, and a reset at every pattern start would make every LFO
+    // retrigger on beat 1 of every bar - the bug invariant 1 was written
+    // against when the PWM LFO's phase lived here as pwmLfoPhase_.
+    struct OscRun {
+        bool   on = false;
+        int    shape = 0;
+        bool   hz = false;
+        double depth = 0.0;   // parameter units, this step
+        double inc = 0.0;     // Hz mode: cycles per sample
+        double acc = 0.0;     // Hz mode: the phase, in cycles, 0..1
+        double spc = 0.0;     // steps mode: steps per cycle
+        double phase0 = 0.0;  // the sweep's start phase
+        long   start = 0;     // the sweep's absolute start step
+        long   stepsIn = 0;   // steps since start, at this step
+        int    which = -1;    // its index in the target's sweep list
+    };
+    OscRun osc_[kSweepTargets];
+    // The Hz-mode oscillators, whose accumulators advance every sample. Kept
+    // as a short list so that with none running the sample loop pays one
+    // comparison.
+    int  oscHz_[kSweepTargets]{};
+    int  oscHzN_ = 0;
+    // The absolute step evaluateSweeps last ran for. A step that is not the
+    // one after it is a discontinuity, and Hz-mode phases are re-derived.
+    long lastSweepPos_ = -2;
     // xorshift32 state for the noise source. Fixed seed so renders are
     // reproducible; only advanced when the noise level is above zero, which
     // keeps the level-0 path bit-identical to the pre-noise engine.

@@ -74,7 +74,12 @@ for i in range(len(bounds) - 1):
         # An element write (`name[i] = ...`) is a write to the member.
         pat = (r"(?<![\w.>])" + re.escape(name) +
                r"\s*(?:\[[^\]]*\])?\s*(?:=(?!=)|\+=|-=|\*=|/=|\+\+|--)|(?:\+\+|--)\s*" + re.escape(name))
-        if re.search(pat, body):
+        # Binding a NON-const reference to it - `OscRun& r = osc_[k];`,
+        # `for (auto& r : osc_)` - is a write too: everything after goes
+        # through `r` and the pattern above never sees the member's name
+        # again. The oscillating sweeps' state (osc_) is written only that way.
+        ref = (r"(?<!const )\b\w+\s*&\s*\w+\s*(?:=|:)\s*" + re.escape(name) + r"\b")
+        if re.search(pat, body) or re.search(ref, body):
             writes.setdefault(name, set()).add(fname)
 
 print("=" * 74)

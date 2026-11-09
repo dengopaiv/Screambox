@@ -63,7 +63,8 @@ through the question dialog:
 - **Y3: oscillating sweeps**, as proposed below: evaluated at sample rate for PWM and the
   cheap targets and at step rate for the rest. The PWM LFO converts into them, and its
   sliders leave the Oscillator dialog. **Phase comes from the song position**, so every
-  play and every export is identical. NOT BUILT.
+  play and every export is identical. **BUILT 2026-11-09 on `rework`, needs ears** - see
+  *Y3, as built* below.
 - **Y4: the whole program in C**, not only the engine. C17 or C23 to be chosen by the full
   sample-exact test. **Sample-exact is the acceptance criterion.** NOT STARTED.
 - **Order:** the tester first (BUILT, see Y4), then the oscillating sweeps in C++, then the
@@ -191,6 +192,84 @@ dialog's mnemonics are its own, not the main window's.
   absolute sweeps like a `.hape`.
 - Whether the "Hz" rate is needed at all. Steps per cycle is the musical unit, but the
   converted PWM LFO needs Hz.
+
+## Y3, as built (2026-11-09, branch `rework`)
+
+**The three open questions, decided as defaults (say if any should go the other way):**
+- **Sample rate (b) for Main PWM and Duplet PWM only**, which is what the PWM LFO needs.
+  Everything else is step rate (a). Volume (tremolo) and Tuning (vibrato) are the obvious
+  next per-sample targets; Cutoff wants the control rate (c). Not done: each needs its own
+  per-sample path with the hoisted value as its off path, and a reason to pay for it.
+- **Presets are relative** - shape, rate, and depth as a fraction of the target's range - so
+  one list serves every target. They live in the Modulation dialog and are not files.
+- **Both rate units**: steps per cycle (the musical one, follows the tempo) and Hz (what the
+  converted LFO needs, and a vibrato's natural unit).
+
+**One design change from the study:** the study had the sweep's own start-to-end line as
+the centre. As built, **an LFO moves whatever the target would otherwise be** - the slider,
+or a straight sweep on the same step - and its start and end values are its *depth*. That
+is what the PWM LFO did (it wobbled around the PWM slider, swept or not), so a song with
+both a PWM sweep and the LFO converts exactly, which the study's model could not do; a ramp
+under a wobble is still one straight sweep plus one LFO; and the depth can fade in. Straight
+sweeps and LFOs are chosen separately per step and never overlap each other.
+
+**What changed where:**
+- Engine: `SweepOsc` on `ParamSweep`; `evaluateSweeps` chooses the straight and the
+  oscillating sweep separately; `osc_` per target, Hz phases accumulated per sample and
+  re-derived from the samples since the sweep started after a discontinuity; the PWM LFO's
+  per-sample block is now the per-sample LFO path, with its expressions kept verbatim.
+  `pwmLfoPhase_` is gone; the three LFO parameters are read by nothing.
+- Format: `.roq` / `.hape` v15, four tokens after the hold token, written only on an
+  oscillating sweep. `loadRoq()` folds a running PWM LFO into whole-song held triangle LFOs
+  in Hz on targets 8 and 11, and drops sweeps on 14-16. A rate-0 song is left untouched.
+- UI: the Oscillator dialog's LFO group is gone (the dialog is 84 units shorter). The sweep
+  editor has **LFO wave** (Alt+W), **Starting phase** (Alt+I), **Frequency** (Alt+Q) and
+  **Measured in** (Alt+M); with a wave, the value captions say *depth* and Hold says what
+  it does for an LFO. The sweep list marks LFOs, and every swept label counts them apart:
+  `Cutoff (2 sweeps, 1 LFO)`. New **Modulation** dialog, `Ctrl+M` or its button: every live
+  target with its counts, Enter edits, eight presets including *The old PWM LFO*.
+- Tools: `check_dsp_ownership.py` now counts binding a non-const reference to a member as a
+  write (`osc_` is only ever written that way, and was invisible to it).
+  `check_keyboard.py` read the main window's mnemonics up to the next `void MainWindow::`,
+  which swept in the sweep editor's helper labels; it now stops at `buildLayout`'s brace.
+
+**Verified:**
+- The tester: the old driver's renders kept from before the change, compared with the new
+  driver's over the first pass of every case. All 44 cases without the LFO are
+  byte-identical over the whole render. All 30 that had it - `lfo_*`, `rich*`, every
+  `sweep_t*` (they run on the rich patch), `sweep_hold`, `sweep_mixed` - are byte-identical
+  over the first pass and differ only after the wrap back to pattern 1, where the phase is
+  now taken from the position. `sweep_all_48k` differs from the start because it swept the
+  retired targets.
+- `tests/songs/`: five songs the OLD build saved with the LFO on (v9, v11, v14 with a PWM
+  sweep under it) load through the fold and render byte-identical over the first pass to
+  the old build's renders, hash for hash the same as the new in-memory cases, and re-save
+  byte-identical to the v15 files those cases write.
+- New cases, each block-size invariant, reload / re-save / `.hape` round trip clean, zero
+  allocations: steps-mode triangle on Cutoff, a sine riding a ramp with a fading-in depth,
+  Hz square on Tuning with a start phase, saws on both PWMs across mixed and triplet
+  patterns at 48 kHz, LFOs that start mid-song and end without hold on a dialog target and
+  on the ring, and Hz LFOs in loop mode (all three loops byte-identical). Two RELATIONS in
+  `check_sound.py`: a depth-0 LFO renders identical to `stock`, per step and per sample.
+- Every module renders and re-saves exactly as before - including a tester's song with LFO
+  rate 0 and both depths at 1, which the first version of the fold rewrote.
+- `check_dsp_ownership.py`, `check_keyboard.py` pass; the app starts and closes with 0.
+- Driven through Win32 messages in the running app: the Modulation dialog lists the 21 live
+  targets; Add LFO places a bar wobble on Cutoff and refuses a second; *The old PWM LFO* on
+  Main PWM opens in the editor as Triangle, 2, Hz, phase 0, captions *Start depth* and the
+  LFO's Hold text; wave Off restores the captions; Cancel keeps the LFO; the main window's
+  Cutoff reads `Cutoff (1 LFO)`.
+
+**Not verified - needs a person:** everything by ear, above all the converted PWM LFO in
+playback (it now restarts with the song instead of running free) and step-rate LFOs on the
+filter; the sweep editor's new row and the Modulation dialog with a screen reader.
+
+**Behaviour changes to tell people about:**
+- **Darkside:** the PWM LFO left the Oscillator dialog. Enter on Main PWM (or the duplet's
+  PWM), then LFO wave - or Ctrl+M, Main PWM, preset *The old PWM LFO*. His songs convert.
+- "Everybody needs a 303" used to switch the PWM LFO off. The LFO is a sweep now, and that
+  button has never touched sweeps, so it no longer does.
+- A song with the LFO re-saves as v15 and no longer opens in 2.0.0.
 
 ## Y4. Rewriting in C17 or C23: study
 

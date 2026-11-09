@@ -95,6 +95,10 @@ RoqSweep toRoq(const SbSweep& w) {
     r.startPat = w.start_pat; r.startStep = w.start_step; r.startVal = w.start_val;
     r.endPat   = w.end_pat;   r.endStep   = w.end_step;   r.endVal   = w.end_val;
     r.hold     = w.hold != 0;
+    r.osc.shape = w.osc_shape;
+    r.osc.hz    = w.osc_hz != 0;
+    r.osc.rate  = w.osc_rate;
+    r.osc.phase = w.osc_phase;
     return r;
 }
 
@@ -104,6 +108,10 @@ SbSweep fromRoq(const RoqSweep& r) {
     w.start_pat = r.startPat; w.start_step = r.startStep; w.start_val = r.startVal;
     w.end_pat   = r.endPat;   w.end_step   = r.endStep;   w.end_val   = r.endVal;
     w.hold      = r.hold ? 1 : 0;
+    w.osc_shape = r.osc.shape;
+    w.osc_hz    = r.osc.hz ? 1 : 0;
+    w.osc_rate  = r.osc.rate;
+    w.osc_phase = r.osc.phase;
     return w;
 }
 
@@ -221,10 +229,12 @@ void sb_engine_load_song(SbEngine* e, const SbSong* s) {
     for (int i = 0; i < s->sweep_count; ++i) {
         const SbSweep& w = s->sweeps[i];
         if (w.target < 0 || w.target >= CBEngine::kSweepTargets) continue;
+        const RoqSweep r = toRoq(w);
         CBEngine::ParamSweep p;
-        p.startPat = w.start_pat; p.startStep = w.start_step; p.startVal = w.start_val;
-        p.endPat   = w.end_pat;   p.endStep   = w.end_step;   p.endVal   = w.end_val;
-        p.hold     = w.hold != 0;
+        p.startPat = r.startPat; p.startStep = r.startStep; p.startVal = r.startVal;
+        p.endPat   = r.endPat;   p.endStep   = r.endStep;   p.endVal   = r.endVal;
+        p.hold     = r.hold;
+        p.osc      = r.osc;
         lists[w.target].push_back(p);
     }
     for (int k = 0; k < CBEngine::kSweepTargets; ++k) e->eng.setParamSweeps(k, lists[k]);

@@ -90,7 +90,7 @@ CBEngine::CBEngine() {
     params_[int(CbParam::DupletPWM)].store(0.5f);
     params_[int(CbParam::DupletDetune)].store(0.0f);
     params_[int(CbParam::DupletLevel)].store(0.0f);
-    params_[int(CbParam::PwmLfoRate)].store(0.0f);        // Hz; 0 = LFO off
+    params_[int(CbParam::PwmLfoRate)].store(0.0f);        // retired, read by nothing
     params_[int(CbParam::PwmLfoDepth)].store(0.0f);
     params_[int(CbParam::PwmLfoDupletDepth)].store(0.0f);
     params_[int(CbParam::NoiseLevel)].store(0.0f);
@@ -312,10 +312,9 @@ constexpr SweepDest kSweepDests[CBEngine::kSweepTargets] = {
     {CbParam::DupletPWM,         100.0f,  0.0f, 1.0f,     0.0f,  false, false},
     {CbParam::DupletDetune,     1200.0f, -1.0f, 1.0f,     0.0f,  false, false},
     {CbParam::DupletLevel,       100.0f,  0.0f, 1.0f,     0.0f,  false, false},
-    // The slowest rate the Rate slider offers; a sweep to or from "off" glides
-    // from or to it, and is off only at the endpoint that says so.
-    // Thousandths, not hundredths: the slow end of the Rate slider moves in
-    // steps of a few thousandths of a Hz, and hundredths merged them.
+    // 14..16 are RETIRED (the PWM LFO's controls; see sweepTargetRetired).
+    // loadRoq() drops sweeps on them, and their parameters are read by nothing,
+    // so these rows only keep the table's numbering.
     {CbParam::PwmLfoRate,       1000.0f,  0.0f, 100.0f,   0.05f, true,  true },
     {CbParam::PwmLfoDepth,       100.0f,  0.0f, 1.0f,     0.0f,  false, false},
     {CbParam::PwmLfoDupletDepth, 100.0f,  0.0f, 1.0f,     0.0f,  false, false},
@@ -348,6 +347,50 @@ float sweepValueNew(int k, float a, float b, float t) {
     if (v > d.hi) v = d.hi;
     return (float)v;
 }
+
+// An oscillating sweep's depth at fraction t, in parameter units. Always
+// linear and never clamped - a depth is a distance, may be negative (the wave
+// upside down), and for a frequency target is a distance in Hz. Rounded
+// through float like every other sweep value, which is also what makes a
+// depth of n percent exactly the n / 100.0f the old LFO depth slider stored.
+float oscDepthAt(int k, float a, float b, float t) {
+    return (float)(((double)a + ((double)b - (double)a) * (double)t) / kSweepDests[k].div);
+}
+
+// The range an oscillating sweep may move target k through, in parameter
+// units: the slider's own. The first seven have no row of their own above.
+void oscRange(int k, double& lo, double& hi) {
+    if (k >= CBEngine::kMainSweepTargets) {
+        lo = kSweepDests[k].lo; hi = kSweepDests[k].hi;
+        return;
+    }
+    const CbParam id = kSweepDests[k].id;
+    const bool bipolar = id == CbParam::Resonance || id == CbParam::EnvMod
+                      || id == CbParam::Tuning;
+    lo = bipolar ? -1.0 : 0.0;
+    hi = 1.0;
+}
+
+// One cycle of each shape, p in [0, 1). Every shape starts at the centre
+// (or, for the square, at the top) and goes UP first, so a start phase of 0
+// means the same thing for all of them. The triangle is the PWM LFO's,
+// expression for expression - that is what makes the converted LFO
+// bit-identical.
+double oscWave(int shape, double p) {
+    switch ((CBEngine::OscShape)shape) {
+        case CBEngine::OscShape::Triangle:
+            return (p < 0.25) ? 4.0 * p
+                 : (p < 0.75) ? 2.0 - 4.0 * p
+                              : 4.0 * p - 4.0;
+        case CBEngine::OscShape::Sine:    return std::sin((double)twopi * p);
+        case CBEngine::OscShape::Square:  return (p < 0.5) ? 1.0 : -1.0;
+        case CBEngine::OscShape::SawUp:   return (p < 0.5) ? 2.0 * p : 2.0 * p - 2.0;
+        case CBEngine::OscShape::SawDown: return (p < 0.5) ? -2.0 * p : 2.0 - 2.0 * p;
+        default:                          return 0.0;
+    }
+}
+
+double frac1(double x) { return x - std::floor(x); }
 } // namespace
 
 CbParam CBEngine::sweepTargetParam(int idx) {
@@ -466,6 +509,11 @@ void CBEngine::applyTransportReset(TransportReset r) {
     // Sweep overrides belong to a playing song position. Stopped, the sliders
     // are what you hear; started, the first step evaluates them afresh.
     for (int i = 0; i < int(CbParam::NumParams); ++i) sweptOn_[i] = false;
+    // Oscillating sweeps likewise; and the next step evaluated is a
+    // discontinuity, so an Hz-mode phase is re-derived from the song position.
+    for (auto& r : osc_) r.on = false;
+    oscHzN_ = 0;
+    lastSweepPos_ = -2;
     stepFrac_ = 0.0;
     if (r == TransportReset::Stop) {
         // On stop: silence the oscillator and clear any pending slide so
@@ -612,9 +660,9 @@ void CBEngine::triggerStep(const CbStep& currStep, const CbStep& nextStep) {
         // !bNoteSlide_ branch and boxAccent_ does not.
         stepReverse_ = currStep.reverseStep;
         // Ring carrier restarts with every new note. Note the contrast with
-        // pwmLfoPhase_, which must NOT be reset: that one is a slow modulator
-        // whose whole point is drifting across the bar, and it is at a rate
-        // where drift is audible AS drift. The ring carrier is at audio rate,
+        // an oscillating sweep's phase (osc_), which must NOT be reset here:
+        // that one is a slow modulator whose whole point is moving across
+        // the bar, and it is at a rate where drift is audible AS drift. The ring carrier is at audio rate,
         // where a drifting phase is not heard as movement at all - only as an
         // attack that lands differently every time, and as a one-pattern loop
         // that quietly stops repeating identically, which this block's whole
@@ -773,8 +821,8 @@ void CBEngine::process(float* out, int frames) {
     // per-block constants, verbatim and in the same types, so with no sweep
     // running every value is exactly what it was.
     struct Voice {
-        float  pwm, subLevel, dupletPwm, dupletLvl, lfoDepth, lfoDupDep, noiseLvl;
-        double dupletFactor, pwmThresh, dupletPwmThresh, pwmLfoInc;
+        float  pwm, subLevel, dupletPwm, dupletLvl, noiseLvl;
+        double dupletFactor, pwmThresh, dupletPwmThresh;
         CbDistCoeffs distC;
         CbCompCoeffs compC;
         CbRingCoeffs ringC;
@@ -787,9 +835,6 @@ void CBEngine::process(float* out, int frames) {
         v.dupletPwm = eff(CbParam::DupletPWM);
         const float fDupletDet = eff(CbParam::DupletDetune);
         v.dupletLvl = eff(CbParam::DupletLevel);
-        const float fLfoRate   = eff(CbParam::PwmLfoRate);
-        v.lfoDepth  = eff(CbParam::PwmLfoDepth);
-        v.lfoDupDep = eff(CbParam::PwmLfoDupletDepth);
         v.noiseLvl  = eff(CbParam::NoiseLevel);
         // Coefficients are derived per block (and per step), never per sample -
         // same tactic as the gate and envelope constants below.
@@ -816,14 +861,13 @@ void CBEngine::process(float* out, int frames) {
         // duty at the extremes so the pulse narrows into near-silent spikes.
         //
         // These stay hoisted out of the sample loop and are used verbatim
-        // while the PWM LFO is off, which keeps the stock-303 path
-        // bit-identical. When the LFO runs the thresholds are recomputed per
-        // sample instead (see the loop below) — a block is longer than one
-        // cycle at the top of the rate range, so per-block modulation would
-        // alias.
+        // while no oscillating sweep is on the target, which keeps the
+        // stock-303 path bit-identical. While one is, the threshold is
+        // recomputed per sample instead (see the loop below) - a block is
+        // longer than one cycle at the top of the rate range, so per-block
+        // modulation would alias.
         v.pwmThresh       = pi + (v.pwm       - 0.5) * pi * 1.98;
         v.dupletPwmThresh = pi + (v.dupletPwm - 0.5) * pi * 1.98;
-        v.pwmLfoInc       = (fLfoRate > 0.0f) ? (double)fLfoRate / sampleRate_ : 0.0;
         return v;
     };
     Voice V = voiceNow();
@@ -930,51 +974,144 @@ void CBEngine::process(float* out, int frames) {
         const long end = patStart.empty() ? 0L : (long)patStart.back();
         return (p < 0) ? (long)p * 64 + st : end + (long)(p - patCount) * 64 + st;
     };
+    // Samples from absolute step a to absolute step b (a <= b), at the
+    // pattern's exact step length - fractions included, carry not. Used only
+    // to re-derive an Hz-mode phase after a discontinuity; continuous play
+    // accumulates instead. Positions outside the song count nothing.
+    auto samplesBetween = [&](long a, long b) -> double {
+        double total = 0.0;
+        if (a < 0) a = 0;
+        for (int p = 0; p < patCount && p + 1 < (int)patStart.size(); ++p) {
+            const long s0 = std::max(a, (long)patStart[p]);
+            const long s1 = std::min(b, (long)patStart[p + 1]);
+            if (s1 > s0)
+                total += (double)(s1 - s0) * exactStepSamples(sampleRate_, fTempo, pats[p].triplet);
+        }
+        return total;
+    };
     // For each slider: the first sweep whose [start, end] covers `cur`
     // interpolates; failing that, the sweep that ended most recently before
     // `cur` keeps its end value if it holds; failing that, no override and
     // the slider's own setting applies.
+    //
+    // Straight and oscillating sweeps make that choice separately (SweepOsc):
+    // the straight one, or the slider, gives the centre, and the oscillating
+    // one moves the value around it. A target with no oscillating sweep runs
+    // exactly the code it ran before they existed.
     auto evaluateSweeps = [&](long cur) {
+        const bool jump = cur != lastSweepPos_ + 1;
+        lastSweepPos_ = cur;
+        oscHzN_ = 0;
         for (int k = 0; k < kSweepTargets; ++k) {
             const auto& list = paramSweeps[k];
             const ParamSweep* cover = nullptr;
             const ParamSweep* before = nullptr;
             long beforeEnd = 0;
             float t = 0.0f;
-            for (const auto& sw : list) {
+            // The oscillating sweep, chosen by the same rule.
+            const ParamSweep* oCover = nullptr;
+            const ParamSweep* oBefore = nullptr;
+            long oBeforeEnd = 0, oStart = 0;
+            int  oIdx = -1;
+            float oT = 0.0f;
+            for (size_t si = 0; si < list.size(); ++si) {
+                const ParamSweep& sw = list[si];
                 const long start = posOf(sw.startPat, sw.startStep);
                 const long end   = posOf(sw.endPat,   sw.endStep);
+                if (sw.osc.on()) {
+                    if (oCover) continue;
+                    if (cur >= start && cur <= end) {
+                        oCover = &sw; oStart = start; oIdx = (int)si;
+                        oT = (end > start) ? (float)(cur - start) / (float)(end - start) : 0.0f;
+                    } else if (end < cur && (!oBefore || end > oBeforeEnd)) {
+                        oBefore = &sw; oBeforeEnd = end; oStart = start; oIdx = (int)si;
+                    }
+                    continue;
+                }
+                if (cover) continue;
                 if (cur >= start && cur <= end) {
                     cover = &sw;
                     t = (end > start) ? (float)(cur - start) / (float)(end - start) : 0.0f;
-                    break;
+                    continue;
                 }
                 if (end < cur && (!before || end > beforeEnd)) { before = &sw; beforeEnd = end; }
             }
             const int id = int(sweepTargetParam(k));
-            if (!cover && !(before && before->hold)) { sweptOn_[id] = false; continue; }
-            if (k >= kMainSweepTargets) {
+            // The straight part, unchanged.
+            if (!cover && !(before && before->hold)) {
+                sweptOn_[id] = false;
+            } else if (k >= kMainSweepTargets) {
                 // The targets added in v14 decode through their own table, so
                 // the original seven below keep their expression untouched.
                 sweptVal_[id] = cover
                     ? sweepValueNew(k, (float)cover->startVal, (float)cover->endVal, t)
                     : sweepValueNew(k, (float)before->endVal, (float)before->endVal, 1.0f);
                 sweptOn_[id]  = true;
-                continue;
+            } else {
+                // Raw matches the UI sliders (-100..+100 bipolar, 0..100
+                // unipolar). Map to the param's native 0..1 (unipolar) or -1..+1
+                // (bipolar) range.
+                const float raw = cover
+                    ? (float)cover->startVal + ((float)cover->endVal - (float)cover->startVal) * t
+                    : (float)before->endVal;
+                float v = raw / 100.0f;
+                const bool bipolar = kIds[k] == CbParam::Resonance || kIds[k] == CbParam::EnvMod
+                                  || kIds[k] == CbParam::Tuning;
+                if (!bipolar && v < 0.0f) v = 0.0f;   // Volume/Cutoff/Decay/Accent
+                sweptVal_[id] = v;
+                sweptOn_[id]  = true;
             }
-            // Raw matches the UI sliders (-100..+100 bipolar, 0..100
-            // unipolar). Map to the param's native 0..1 (unipolar) or -1..+1
-            // (bipolar) range.
-            const float raw = cover
-                ? (float)cover->startVal + ((float)cover->endVal - (float)cover->startVal) * t
-                : (float)before->endVal;
-            float v = raw / 100.0f;
-            const bool bipolar = kIds[k] == CbParam::Resonance || kIds[k] == CbParam::EnvMod
-                              || kIds[k] == CbParam::Tuning;
-            if (!bipolar && v < 0.0f) v = 0.0f;   // Volume/Cutoff/Decay/Accent
-            sweptVal_[id] = v;
+
+            // The oscillating part.
+            OscRun& r = osc_[k];
+            const ParamSweep* o = oCover ? oCover : ((oBefore && oBefore->hold) ? oBefore : nullptr);
+            if (!o) { r.on = false; continue; }
+            // A different sweep from last step's, or a position that does not
+            // follow on from it: the phase is taken afresh from the position.
+            const bool fresh = jump || !r.on || r.which != oIdx || r.start != oStart;
+            r.on      = true;
+            r.which   = oIdx;
+            r.start   = oStart;
+            r.stepsIn = cur - oStart;
+            r.shape   = o->osc.shape;
+            r.hz      = o->osc.hz;
+            r.phase0  = (double)o->osc.phase;
+            r.depth   = (double)(oCover ? oscDepthAt(k, (float)o->startVal, (float)o->endVal, oT)
+                                        : oscDepthAt(k, (float)o->endVal, (float)o->endVal, 1.0f));
+            const double rate = o->osc.rate > 0.0f ? (double)o->osc.rate : 0.0;
+            if (r.hz) {
+                // The PWM LFO's own increment, expression for expression. At
+                // or above the sample rate, only its fraction: the phase is
+                // read modulo 1, so that is the same wave, and it keeps the
+                // single wrap per sample in the loop below sufficient.
+                r.inc = rate / sampleRate_;
+                if (r.inc >= 1.0) r.inc -= std::floor(r.inc);
+                if (fresh) r.acc = frac1(r.phase0 + samplesBetween(oStart, cur) * r.inc);
+                oscHz_[oscHzN_++] = k;
+            } else {
+                r.spc = rate;
+            }
+            if (sweepTargetPerSample(k)) continue;   // moved in the sample loop
+            // Everything else moves once per step: the wave where this step's
+            // first sample has it, around whatever the straight part left.
+            const double ph = r.hz ? frac1(r.acc + r.inc)
+                            : (r.spc > 0.0 ? frac1(r.phase0 + (double)r.stepsIn / r.spc)
+                                           : frac1(r.phase0));
+            const double centre = sweptOn_[id] ? (double)sweptVal_[id]
+                                               : (double)params_[id].load(std::memory_order_relaxed);
+            double lo, hi;
+            oscRange(k, lo, hi);
+            sweptVal_[id] = (float)std::clamp(centre + r.depth * oscWave(r.shape, ph), lo, hi);
             sweptOn_[id]  = true;
         }
+    };
+    // The phase an oscillating sweep has at this sample, per-sample targets
+    // only. Hz mode reads the accumulator, already advanced for this sample.
+    auto oscPhaseNow = [&](const OscRun& r) -> double {
+        if (r.hz) return r.acc;
+        if (!(r.spc > 0.0)) return frac1(r.phase0);
+        return frac1(r.phase0 + ((double)r.stepsIn
+                                 + (double)samplesIntoStep_ / (double)samplesPerStep_) / r.spc);
     };
 
     // Envelope constants (from SilverBox.cpp wwelti branch)
@@ -1108,7 +1245,8 @@ void CBEngine::process(float* out, int frames) {
                 // still sounding is a click, and it threw the glide away - the
                 // note never reached the pitch it was sliding to. The tie is
                 // one note; the reset belongs to the next new one. Note that
-                // pwmLfoPhase_ is untouched either way (invariant 1).
+                // the oscillating sweeps' phases (osc_) are untouched either
+                // way (invariant 1).
                 if (currentStep_ == 0 && !bNoteSlide_) resetFilters();
                 triggerStep(pat->steps[currentStep_], patAt(nextPat).steps[nextStep]);
 
@@ -1204,32 +1342,34 @@ void CBEngine::process(float* out, int frames) {
             }
         }
 
-        // --- shared PWM LFO: one triangle, one rate, two depths ---
-        // Free-running: the phase is never reset, so repeated notes and
-        // repeated patterns catch the LFO at different points. Both duty
-        // thresholds fall back to the hoisted block constants when the LFO
-        // is off, so rate == 0 costs one predictable branch and nothing else.
+        // --- oscillating sweeps (what was the PWM LFO) ---
+        // Hz-mode phases advance here, every sample, wherever their target is
+        // evaluated: a per-step target reads its phase at the step boundary,
+        // and that has to be the phase the song position has reached. With
+        // none running this is one comparison.
+        for (int j = 0; j < oscHzN_; ++j) {
+            OscRun& r = osc_[oscHz_[j]];
+            r.acc += r.inc;
+            if (r.acc >= 1.0) r.acc -= 1.0;
+        }
+        // The two duty thresholds fall back to the hoisted block constants
+        // when no oscillating sweep is on them, which is the stock path.
+        // The expressions are the PWM LFO's, verbatim: centre plus depth
+        // times the wave, clamped (not wrapped) to the duty range - a wrap
+        // would snap the pulse inside out - then the threshold formula.
         double thrMain   = V.pwmThresh;
         double thrDuplet = V.dupletPwmThresh;
-        if (V.pwmLfoInc > 0.0) {
-            pwmLfoPhase_ += V.pwmLfoInc;
-            if (pwmLfoPhase_ >= 1.0) pwmLfoPhase_ -= 1.0;
-            // Triangle, bipolar, starting at centre and rising: 0 → +1 → -1 → 0.
-            const double p = pwmLfoPhase_;
-            const double tri = (p < 0.25) ? 4.0 * p
-                             : (p < 0.75) ? 2.0 - 4.0 * p
-                                          : 4.0 * p - 4.0;
-            // Depth 1.0 against the centre PWM of 0.5 sweeps the full duty
-            // range. Clamping (not wrapping) flattens at the rails, which is
-            // the wanted behaviour — a wrap would snap the pulse inside out.
-            if (V.lfoDepth > 0.0f) {
-                const double m = std::clamp((double)V.pwm + (double)V.lfoDepth * tri, 0.0, 1.0);
-                thrMain = pi + (m - 0.5) * pi * 1.98;
-            }
-            if (V.lfoDupDep > 0.0f && V.dupletLvl > 0.0f) {
-                const double m = std::clamp((double)V.dupletPwm + (double)V.lfoDupDep * tri, 0.0, 1.0);
-                thrDuplet = pi + (m - 0.5) * pi * 1.98;
-            }
+        if (osc_[8].on) {
+            const OscRun& r = osc_[8];
+            const double m = std::clamp((double)V.pwm
+                                        + r.depth * oscWave(r.shape, oscPhaseNow(r)), 0.0, 1.0);
+            thrMain = pi + (m - 0.5) * pi * 1.98;
+        }
+        if (osc_[11].on && V.dupletLvl > 0.0f) {
+            const OscRun& r = osc_[11];
+            const double m = std::clamp((double)V.dupletPwm
+                                        + r.depth * oscWave(r.shape, oscPhaseNow(r)), 0.0, 1.0);
+            thrDuplet = pi + (m - 0.5) * pi * 1.98;
         }
 
         double snd = 0.0;

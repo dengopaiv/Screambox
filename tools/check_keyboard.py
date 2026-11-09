@@ -100,7 +100,10 @@ check(not alt_letter, "no accelerator uses a plain Alt+letter chord",
 
 # ----------------------------------------------------------------- mnemonics
 start = mw.find("void MainWindow::buildLayout")
-body = mw[start:mw.find("\nvoid MainWindow::", start + 10)]
+# To buildLayout's own closing brace. This used to run to the next
+# "void MainWindow::", which swept in every free function in between - and the
+# sweep editor's helpers, whose labels are that DIALOG's mnemonics, sit there.
+body = mw[start:mw.find("\n}", start)]
 mnemonics = {}
 for m in re.finditer(r'L"([^"]*&[A-Za-z][^"]*)"', body):
     for k in re.finditer(r"&([A-Za-z])", m.group(1)):

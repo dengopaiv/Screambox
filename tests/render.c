@@ -89,8 +89,9 @@ typedef struct Opt {
 
 static long long frameCount(const SbSong* s, const Opt* o) {
     /* One pass and then pattern 0 again, so the wrap back to the start (the
-     * per-pattern reset, a slide across the bar line, the free-running PWM
-     * LFO) is in every render. Loop mode: pattern 0 three times. */
+     * per-pattern reset, a slide across the bar line, an oscillating sweep's
+     * phase taken afresh from the position) is in every render. Loop mode:
+     * pattern 0 three times. */
     SbSong* first = newSong();
     memcpy(first->params, s->params, sizeof s->params);
     first->pattern_count = 1;
@@ -265,24 +266,44 @@ static void basicSong(SbSong* s) {
     s->params[SB_RESONANCE] = 0.7f;
 }
 
+static SbSweep* addSweep(SbSong* s, int target, int sp, int ss, int sv, int ep, int es, int ev,
+                         int hold) {
+    SbSweep* w = &s->sweeps[s->sweep_count++];
+    memset(w, 0, sizeof *w);
+    w->target = target;
+    w->start_pat = sp; w->start_step = ss; w->start_val = sv;
+    w->end_pat = ep;   w->end_step = es;   w->end_val = ev;
+    w->hold = hold;
+    return w;
+}
+
+/* An oscillating sweep (.roq v15): depth sv..ev in the target's stored units. */
+static SbSweep* addOsc(SbSong* s, int target, int sp, int ss, int sv, int ep, int es, int ev,
+                       int hold, int shape, int hz, float rate, float phase) {
+    SbSweep* w = addSweep(s, target, sp, ss, sv, ep, es, ev, hold);
+    w->osc_shape = shape; w->osc_hz = hz; w->osc_rate = rate; w->osc_phase = phase;
+    return w;
+}
+
+/* The PWM LFO as it is now: a triangle in Hz on each PWM target with a depth,
+ * from the top of the song, holding - what loading a pre-v15 song makes of
+ * the LFO's three values (foldPwmLfo in RoqIO.cpp). */
+static void pwmLfo(SbSong* s, float rate, int mainPct, int dupPct) {
+    const int lp = s->pattern_count - 1, ls = s->patterns[lp].last_step;
+    if (mainPct > 0) addOsc(s, 8,  0, 0, mainPct, lp, ls, mainPct, 1, SB_OSC_TRIANGLE, 1, rate, 0.0f);
+    if (dupPct > 0)  addOsc(s, 11, 0, 0, dupPct,  lp, ls, dupPct,  1, SB_OSC_TRIANGLE, 1, rate, 0.0f);
+}
+
 /* Every block on, so a sweep on any target is audible. */
 static void richPatch(SbSong* s) {
     float* v = s->params;
     v[SB_WAVEFORM] = 1.0f;     v[SB_PWM] = 0.4f;          v[SB_SUB_LEVEL] = 0.3f;
     v[SB_DUPLET_WAVEFORM] = 1.0f; v[SB_DUPLET_PWM] = 0.6f; v[SB_DUPLET_DETUNE] = 0.25f;
-    v[SB_DUPLET_LEVEL] = 0.5f; v[SB_PWM_LFO_RATE] = 2.0f;  v[SB_PWM_LFO_DEPTH] = 0.3f;
-    v[SB_PWM_LFO_DUPLET_DEPTH] = 0.2f; v[SB_NOISE_LEVEL] = 0.05f;
+    v[SB_DUPLET_LEVEL] = 0.5f; v[SB_NOISE_LEVEL] = 0.05f;
     v[SB_DIST_TYPE] = 1.0f;    v[SB_DIST_GAIN] = 0.4f;    v[SB_DIST_TONE] = 0.5f;
     v[SB_DIST_LEVEL] = 0.8f;   v[SB_COMP_THRESHOLD] = 0.4f; v[SB_COMP_DEPTH] = 0.5f;
     v[SB_RING_HZ] = 150.0f;    v[SB_RING_AMOUNT] = 0.3f;
-}
-
-static void addSweep(SbSong* s, int target, int sp, int ss, int sv, int ep, int es, int ev, int hold) {
-    SbSweep* w = &s->sweeps[s->sweep_count++];
-    w->target = target;
-    w->start_pat = sp; w->start_step = ss; w->start_val = sv;
-    w->end_pat = ep;   w->end_step = es;   w->end_val = ev;
-    w->hold = hold;
+    pwmLfo(s, 2.0f, 30, 20);   /* was PWM LFO rate 2 Hz, depths 0.3 and 0.2 */
 }
 
 /* A sweep range that is audible and legal for each target, in stored units. */
@@ -291,7 +312,6 @@ static void sweepRange(int k, int* a, int* b) {
         case 2: case 3: case 6: *a = -80;  *b = 80;     break;   /* bipolar main sliders */
         case 7:  *a = 20;    *b = 180;    break;   /* squelch x100 */
         case 12: *a = -700;  *b = 700;    break;   /* cents */
-        case 14: *a = 500;   *b = 20000;  break;   /* thousandths of a Hz */
         case 22: *a = 2000;  *b = 200000; break;   /* hundredths of a Hz */
         default: *a = 10;    *b = 90;     break;   /* percent */
     }
@@ -336,14 +356,62 @@ static void cDupletSaw(SbSong* s, Opt* o) {
     (void)o; basicSong(s);
     s->params[SB_DUPLET_LEVEL] = 0.6f; s->params[SB_DUPLET_DETUNE] = -0.07f; s->params[SB_DUPLET_WAVEFORM] = 0.0f;
 }
-static void lfo(SbSong* s, float rate, float main, float dup) {
+static void lfo(SbSong* s, float rate, int mainPct, int dupPct) {
     basicSong(s);
-    s->params[SB_PWM_LFO_RATE] = rate; s->params[SB_PWM_LFO_DEPTH] = main;
-    s->params[SB_PWM_LFO_DUPLET_DEPTH] = dup; s->params[SB_DUPLET_LEVEL] = 0.5f;
+    s->params[SB_DUPLET_LEVEL] = 0.5f;
+    pwmLfo(s, rate, mainPct, dupPct);
 }
-static void cLfoSlow(SbSong* s, Opt* o) { (void)o; lfo(s, 0.05f, 1.0f, 0.0f); }
-static void cLfoMid(SbSong* s, Opt* o)  { (void)o; lfo(s, 2.0f, 0.4f, 0.6f); }
-static void cLfoFast(SbSong* s, Opt* o) { (void)o; lfo(s, 100.0f, 0.3f, 0.3f); }
+static void cLfoSlow(SbSong* s, Opt* o) { (void)o; lfo(s, 0.05f, 100, 0); }
+static void cLfoMid(SbSong* s, Opt* o)  { (void)o; lfo(s, 2.0f, 40, 60); }
+static void cLfoFast(SbSong* s, Opt* o) { (void)o; lfo(s, 100.0f, 30, 30); }
+
+/* Oscillating sweeps (TODO Y3), beyond the PWM LFO. */
+static void mixed(SbSong* s);
+/* Steps mode, per step: a triangle on Cutoff, 8 steps a cycle, the whole song. */
+static void cOscCutoffSteps(SbSong* s, Opt* o) {
+    (void)o; basicSong(s);
+    addOsc(s, 1, 0, 0, 25, 1, 15, 25, 1, SB_OSC_TRIANGLE, 0, 8.0f, 0.0f);
+}
+/* A straight sweep and an oscillating one on the same target: the wave rides
+ * the ramp. And the depth fades in, 0 to 30. */
+static void cOscOnRamp(SbSong* s, Opt* o) {
+    (void)o; basicSong(s);
+    addSweep(s, 1, 0, 0, 10, 1, 15, 70, 0);
+    addOsc(s, 1, 0, 0, 0, 1, 15, 30, 0, SB_OSC_SINE, 0, 4.0f, 0.0f);
+}
+/* Hz mode on a per-step target: vibrato-ish Tuning, square, with a start phase. */
+static void cOscTuningHz(SbSong* s, Opt* o) {
+    (void)o; basicSong(s);
+    addOsc(s, 6, 0, 0, 20, 1, 15, 20, 1, SB_OSC_SQUARE, 1, 3.3f, 0.25f);
+}
+/* Per sample, steps mode: saws on both PWMs across mixed and triplet patterns. */
+static void cOscPwmSaws(SbSong* s, Opt* o) {
+    mixed(s); o->sr = 48000.0;
+    s->params[SB_DUPLET_LEVEL] = 0.5f;
+    addOsc(s, 8,  0, 0, 40, 3, 22, 40, 1, SB_OSC_SAW_UP,   0, 3.0f, 0.0f);
+    addOsc(s, 11, 1, 2, 10, 3, 10, 45, 0, SB_OSC_SAW_DOWN, 0, 5.5f, 0.5f);
+}
+/* Starting mid-song, ending without hold, on a dialog target and the ring. */
+static void cOscStartsLate(SbSong* s, Opt* o) {
+    (void)o; basicSong(s); richPatch(s);
+    addOsc(s, 18, 0, 6, 30, 1, 9, 30, 0, SB_OSC_TRIANGLE, 1, 0.7f, 0.0f);
+    addOsc(s, 22, 1, 0, 5000, 1, 15, 5000, 0, SB_OSC_SINE, 0, 2.0f, 0.0f);
+}
+/* Depth 0 adds nothing: check_sound.py's RELATIONS hold these equal to stock. */
+static void cOscZeroCutoff(SbSong* s, Opt* o) {
+    (void)o; basicSong(s);
+    addOsc(s, 1, 0, 0, 0, 1, 15, 0, 1, SB_OSC_TRIANGLE, 1, 5.0f, 0.1f);
+}
+static void cOscZeroPwm(SbSong* s, Opt* o) {
+    (void)o; basicSong(s);
+    addOsc(s, 8, 0, 0, 0, 1, 15, 0, 1, SB_OSC_SQUARE, 0, 2.0f, 0.0f);
+}
+/* Loop mode in Hz: the phase is the position's, so every loop is the same. */
+static void cOscLoopHz(SbSong* s, Opt* o) {
+    basicSong(s); o->loop = 1;
+    addOsc(s, 8, 0, 0, 45, 0, 15, 45, 1, SB_OSC_SINE, 1, 1.7f, 0.0f);
+    addOsc(s, 0, 0, 0, 30, 0, 15, 30, 1, SB_OSC_TRIANGLE, 1, 2.9f, 0.0f);
+}
 static void dist(SbSong* s, float type) {
     basicSong(s);
     s->params[SB_DIST_TYPE] = type; s->params[SB_DIST_GAIN] = 0.6f;
@@ -455,6 +523,7 @@ static void cSweepAll(SbSong* s, Opt* o) {
     basicSong(s); richPatch(s); o->sr = 48000.0;
     for (int k = 0; k < SB_SWEEP_TARGETS; ++k) {
         int a, b;
+        if (k >= 14 && k <= 16) continue;   /* retired with the PWM LFO */
         sweepRange(k, &a, &b);
         addSweep(s, k, 0, k % 8, a, 1, 8 + k % 8, b, k % 3 == 0);
     }
@@ -483,6 +552,10 @@ static const Case kCases[] = {
     {"duplet_square", cDupletSquare, -1}, {"duplet_saw", cDupletSaw, -1},
     {"lfo_slow", cLfoSlow, -1},        {"lfo_mid", cLfoMid, -1},
     {"lfo_fast", cLfoFast, -1},
+    {"osc_cutoff_steps", cOscCutoffSteps, -1}, {"osc_on_ramp", cOscOnRamp, -1},
+    {"osc_tuning_hz", cOscTuningHz, -1}, {"osc_pwm_saws_48k", cOscPwmSaws, -1},
+    {"osc_starts_late", cOscStartsLate, -1}, {"osc_loop_hz", cOscLoopHz, -1},
+    {"osc_zero_cutoff", cOscZeroCutoff, -1}, {"osc_zero_pwm", cOscZeroPwm, -1},
     {"dist_classic", cDistClassic, -1}, {"dist_rat", cDistRat, -1},
     {"dist_screamer", cDistScreamer, -1}, {"dist_plus", cDistPlus, -1},
     {"dist_fuzz", cDistFuzz, -1},      {"fuzz_ring_rests", cFuzzRingRests, -1},
@@ -492,13 +565,13 @@ static const Case kCases[] = {
     {"rich_96k", cRich96k, -1},        {"rich_22k", cRich22k, -1},
     {"sweep_hold", cSweepHold, -1},    {"sweep_mixed", cSweepMixed, -1},
     {"sweep_all_48k", cSweepAll, -1},
-    /* one ramp per target, 0..23 */
+    /* one ramp per target, 0..23; 14..16 retired with the PWM LFO */
     {"sweep_t00", cSweep, 0},  {"sweep_t01", cSweep, 1},  {"sweep_t02", cSweep, 2},
     {"sweep_t03", cSweep, 3},  {"sweep_t04", cSweep, 4},  {"sweep_t05", cSweep, 5},
     {"sweep_t06", cSweep, 6},  {"sweep_t07", cSweep, 7},  {"sweep_t08", cSweep, 8},
     {"sweep_t09", cSweep, 9},  {"sweep_t10", cSweep, 10}, {"sweep_t11", cSweep, 11},
-    {"sweep_t12", cSweep, 12}, {"sweep_t13", cSweep, 13}, {"sweep_t14", cSweep, 14},
-    {"sweep_t15", cSweep, 15}, {"sweep_t16", cSweep, 16}, {"sweep_t17", cSweep, 17},
+    {"sweep_t12", cSweep, 12}, {"sweep_t13", cSweep, 13},
+    {"sweep_t17", cSweep, 17},
     {"sweep_t18", cSweep, 18}, {"sweep_t19", cSweep, 19}, {"sweep_t20", cSweep, 20},
     {"sweep_t21", cSweep, 21}, {"sweep_t22", cSweep, 22}, {"sweep_t23", cSweep, 23},
 };

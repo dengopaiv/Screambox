@@ -50,7 +50,9 @@ custom accessible object. The only accessibility API used is `NotifyWinEvent`.
 
 - **Never disable a control to mean "this does nothing right now."** It announces as
   *unavailable* with no discoverable cause. Put it in the label text instead — the way
-  the PWM LFO depth labels retitle themselves when the main oscillator is a saw.
+  the Acid FX gain, tone and level labels say "no effect" while the type is Classic, and
+  the sweep editor's first LFO wave reads "Off: a straight sweep (frequency and phase
+  unused)" rather than greying the fields beside it.
 - **Set control text through `announceValue()`, not `SetWindowText`.** It fires
   `EVENT_OBJECT_NAMECHANGE` and `EVENT_OBJECT_VALUECHANGE`; without those a screen reader
   keeps reading stale state.
@@ -104,10 +106,14 @@ custom accessible object. The only accessibility API used is `NotifyWinEvent`.
 Breaking any of these is silent. Nothing fails to compile, nothing throws, and the bug
 shows up later as "it sounds different now" with no obvious cause.
 
-1. **`resetFilters()` must not touch `pwmLfoPhase_`.** It zeroes `boxOsc_`, `dupletOsc_`
-   and `subOscPhase_`, and runs at every pattern start. The LFO is free-running by
-   design; adding its phase there — the natural-looking place — converts it into a
-   per-pattern retrigger and nothing will tell you.
+1. **`resetFilters()` must not touch the LFOs' state (`osc_`).** It zeroes `boxOsc_`,
+   `dupletOsc_` and `subOscPhase_`, and runs at every pattern start. An LFO's phase belongs
+   to the song position; adding it there — the natural-looking place — turns every LFO into
+   a per-pattern retrigger and nothing will tell you. The phase is taken afresh only where
+   playback does not simply move on to the next step (`lastSweepPos_` in
+   `evaluateSweeps`: Play, a loop, the wrap to pattern 1), and accumulated in between.
+   This used to read "`pwmLfoPhase_`": the PWM LFO was free-running until v15 folded it
+   into oscillating sweeps (TODO Y3).
 2. **`wwelti_IIR_IIRlp3pole` in `src/IIR.cpp` stays byte-for-byte as it is.** New filter
    behaviour goes in a sibling function (`_boost` is the existing example) and the caller
    picks. The stock path being unedited *is* the proof the stock sound is unchanged.
@@ -135,8 +141,19 @@ shows up later as "it sounds different now" with no obvious cause.
    keep the hoisted version as the off-path fast path.
 5. **Skip work entirely when a feature is off**, don't just multiply by zero. The noise
    RNG must not advance at level 0, or invariant 4 stops holding for it.
-6. Sweeps are evaluated once per sequencer step. Anything that needs per-sample
-   resolution is not a sweep.
+6. Sweeps are evaluated once per sequencer step. **The one exception is an oscillating
+   sweep (an LFO, v15) on a per-sample target** - `CBEngine::sweepTargetPerSample()`, today
+   Main PWM and Duplet PWM - whose wave is computed in the sample loop from the depth and
+   phase `evaluateSweeps` set up at the step. Adding a target to that set means giving it
+   a per-sample path in the loop with the hoisted value as its off path, as the PWM
+   thresholds have. Everything else about an LFO is per step.
+   - **Straight and oscillating sweeps are chosen separately** in `evaluateSweeps`: the
+     straight one (or the slider) is the centre, the LFO is added to it and clamped to the
+     slider's range. A target with no LFO runs exactly the code it ran before v15. The
+     PWM LFO's expressions survive verbatim in the per-sample path (increment
+     `rate / sampleRate_`, accumulate, wrap at 1, the triangle, the clamp, the threshold) -
+     that is what makes an old song's LFO, converted on load, bit-identical in a fresh
+     engine. Change them and `tests/songs/lfo_*` tell you.
    - **Nothing that changes at a step boundary may wait for the next block.** This is the
      one rule behind two bugs that each "moved with the audio buffer size". The knob values
      (`Knobs`, `deriveKnobs()`) used to be derived only at the top of `process()`, so a
@@ -161,10 +178,12 @@ shows up later as "it sounds different now" with no obvious cause.
      `MainWindow.cpp`, the list in `CBEngine.h`). Append only. A new sweepable parameter
      gets the next number, a row in both tables, and - if the audio thread hoists it per
      block - a place in `Voice` (`voiceNow()`), which is recomputed at every step boundary
-     for the rule above. Stored values are real units: percent, cents, and thousandths
-     (LFO rate) or hundredths (ring) of a Hz; hundredths merged the slow end of the LFO
-     slider. The frequency targets interpolate geometrically. The proof for a new target
-     is that a constant sweep renders byte-identical to the slider at that value.
+     for the rule above. Stored values are real units: percent, cents, and hundredths of a
+     Hz (ring). The frequency target interpolates geometrically. The proof for a new
+     target is that a constant sweep renders byte-identical to the slider at that value.
+     **14-16 are retired** (the PWM LFO's rate and depths, gone with it in v15 before any
+     release carried them): the numbers stay taken, `loadRoq()` drops sweeps on them, and
+     nothing lists them (`CBEngine::sweepTargetRetired`).
    - **A sweep position is an absolute step number**, `patStart[p] + step`, with
      `patStart` a prefix sum computed in `SongWriter::commit()` (UI thread; the audio thread
      only reads it). A sweep therefore advances the same amount per step across patterns of
@@ -189,7 +208,7 @@ shows up later as "it sounds different now" with no obvious cause.
    chase the carrier's amplitude modulation and partly cancel the ring, so two amount
    controls would fight in a way neither label explains.
    - **The ring carrier's phase is re-zeroed on every new note**, in `triggerStep`. This is
-     the opposite of the `pwmLfoPhase_` rule above, and the reason is the rate: a slow LFO's
+     the opposite of the LFO phase rule above, and the reason is the rate: a slow LFO's
      drift across the bar is the feature, while an audio-rate carrier's drift is not heard
      as movement at all - only as an attack that lands differently every time, and as a
      one-pattern loop that quietly stops repeating identically. It uses **cos**, not sin, so
@@ -241,8 +260,8 @@ shows up later as "it sounds different now" with no obvious cause.
    the glide away. Everything that looks ahead uses `nextPlayedStep()` - next pattern's step
    0 in FullSequence, the same pattern's in loop mode - so the slide decision, the glide
    target and `audibleNoteLength()`'s tie walk can no longer disagree at the bar line, which
-   they did for as long as the reset hid it. Invariant 1 is untouched: `pwmLfoPhase_` is
-   reset by neither path.
+   they did for as long as the reset hid it. Invariant 1 is untouched: the LFOs' `osc_`
+   is reset by neither path.
 
 ## How engine changes get verified
 
@@ -266,7 +285,10 @@ with `cmake --build build --config Release --target screambox_render`.
 The driver is C and talks only to `tests/sb_api.h`, so a C port links the same driver and
 the same manifest unchanged; that is its purpose (TODO Y4). `sb_engine_load_song()` in
 `tests/sb_api_cpp.cpp` mirrors what `MainWindow::loadRoqFile()` does to the engine, so keep
-the two in step.
+the two in step. `tests/songs/` holds songs written by OLDER builds, rendered from their
+files like the modules: what a newer build makes of them on load (the v15 PWM LFO fold) is
+tested on bytes those builds really wrote. Add one when a load path starts converting
+something.
 
 For a new feature, the manifest proves the off path but not the feature itself. The fuller
 method below still applies to the feature:
@@ -322,9 +344,11 @@ only because it grows by appending tokens.
   exactly the bytes v9 wrote and still opens in an older build. Five rules feed it so far:
   a pattern that is not 16 steps forces v10, any acid-FX field that differs from its default
   forces v11, any pattern in triplet mode forces v12, any sweep that holds its end value
-  forces v13, and any sweep on a target above 6 forces v14. v14 changed no bytes of the
-  layout; it exists because an older build *silently drops* such a sweep, and a song that
-  quietly sounds different is what the header is for. **Extend that function rather than
+  forces v13, any sweep on a target above 6 forces v14, and any oscillating sweep forces
+  v15. v14 changed no bytes of the layout; it exists because an older build *silently
+  drops* such a sweep, and a song that quietly sounds different is what the header is for.
+  v15 is the same argument: an older build would play an LFO as a straight sweep between
+  its two depths. **Extend that function rather than
   bumping a constant**, and make the writer's field blocks `if (version >= N)` mirror the
   reader's exactly - a file stamped 9 that carries v11's lines would have those read as the
   pattern count.
@@ -348,11 +372,20 @@ only because it grows by appending tokens.
   v14's new sweep targets deliberately do **not** raise it: the sweep editor's Load keeps
   only the current slider's sweeps and says how many it skipped, so an older build reports
   a squelch sweep as skipped instead of misplaying it - there is nothing silent to prevent.
+  An LFO does raise it, to 15 (`kHapeOscVersion`): it is on the slider being edited, so an
+  older build would keep it and misplay it.
+- **A load path may convert, but only what it must.** v15's `foldPwmLfo()` turns a running
+  PWM LFO into oscillating sweeps and zeroes its three header values; a song whose LFO
+  rate is 0 is left exactly as it was, inert depths and all, so it re-saves to its own
+  bytes. One of the testers' modules is such a song, which is how this was found.
 - **Extend a line with an extra token** rather than changing its shape — an older
   three-token parser then still reads the first three correctly. This is how the per-step
   reverse-step column was added.
-- **Store real units, not UI positions.** The PWM LFO rate is in Hz everywhere so the UI
-  taper can be retuned later without repitching saved songs.
+- **Store real units, not UI positions.** An LFO's rate is stored in Hz or in steps per
+  cycle, as typed, and its phase in cycles, so a UI can change how it shows them without
+  moving saved songs. Floats on the sweep line are written as the shortest text that reads
+  back as the same float (`floatToken`), by trying precisions with `snprintf` - which a C
+  port can reproduce byte for byte.
 - `.cb` is import-only in practice. `saveCb()` exists but nothing in the UI reaches it, so
   new per-step data does not need to round-trip through the 2002 format. It is also fixed
   at 16 steps per pattern and cannot be otherwise — no length field, and the reader counts

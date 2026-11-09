@@ -1,6 +1,8 @@
 #include "RoqIO.h"
 
+#include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <sstream>
 
@@ -76,7 +78,16 @@ constexpr const char* kHapeMagic = "CreakboxHape";
 //     quietly sounds different is the one outcome the header exists to
 //     prevent, so such a song is stamped 14 and an older build refuses it out
 //     loud instead. Stamped only when some sweep has such a target.
-constexpr int kMaxVersion = 14;
+// v15: oscillating sweeps (TODO Y3) - four more tokens on the sweep line, after
+//     the hold token: shape, rate unit (0 steps per cycle, 1 Hz), rate, start
+//     phase in cycles. Written only on a sweep that oscillates. Tolerant on the
+//     page exactly as v13 was, and stamped anyway for v14's reason: an older
+//     build would play an oscillating sweep as a straight one between its two
+//     DEPTHS, without a word. Stamped only when some sweep oscillates.
+//     The same version retires the PWM LFO: its three header lines stay
+//     (positional) and are written as 0, and a song that used it loads with
+//     the LFO folded into oscillating sweeps - foldPwmLfo() below.
+constexpr int kMaxVersion = 15;
 
 // .hape shares the version counter with .roq for historical reasons, but its
 // schema — a sweep count and one line per sweep — has never changed. Pin it
@@ -96,27 +107,118 @@ constexpr int kMaxVersion = 14;
 // whole file would lose the sweeps it can use, to protect nothing.
 constexpr int kHapeVersion     = 9;
 constexpr int kHapeHoldVersion = 13;
+// An oscillating sweep in a .hape IS a reason to refuse it in an older build,
+// unlike v14's targets: the older build would keep it - it is on the slider
+// being edited - and play it as a straight sweep between its depths.
+constexpr int kHapeOscVersion  = 15;
 
 bool anyHold(const std::vector<RoqSweep>& sweeps) {
     for (const auto& s : sweeps) if (s.hold) return true;
     return false;
 }
 
-// One sweep line, the seven fields every version has plus the v13 hold token.
+bool anyOsc(const std::vector<RoqSweep>& sweeps) {
+    for (const auto& s : sweeps) if (s.osc.on()) return true;
+    return false;
+}
+
+// The shortest text that reads back as exactly this float. Done by trying
+// precisions rather than with std::to_chars so that the C port can produce
+// the same bytes with nothing but snprintf and strtof.
+std::string floatToken(float v) {
+    char buf[32];
+    for (int prec = 1; prec <= 9; ++prec) {
+        std::snprintf(buf, sizeof buf, "%.*g", prec, (double)v);
+        if (std::strtof(buf, nullptr) == v) break;
+    }
+    return buf;
+}
+
+// One sweep line, the seven fields every version has, the v13 hold token and
+// the v15 oscillation tokens. Missing tokens leave the defaults: no hold, no
+// oscillation.
 void readSweepLine(const std::string& line, RoqSweep& sw) {
     std::istringstream ss(line);
     ss >> sw.sliderIdx >> sw.startPat >> sw.startStep >> sw.startVal
        >> sw.endPat   >> sw.endStep   >> sw.endVal;
     int hold = 0;
     if (ss >> hold) sw.hold = hold != 0;
+    int shape = 0, hz = 0;
+    std::string rate, phase;
+    if (ss >> shape >> hz >> rate >> phase) {
+        sw.osc.shape = shape;
+        sw.osc.hz    = hz != 0;
+        sw.osc.rate  = std::strtof(rate.c_str(), nullptr);
+        sw.osc.phase = std::strtof(phase.c_str(), nullptr);
+        // strtof reads "nan" and "inf", and a NaN phase would reach the audio
+        // as NaN samples. Nothing this program writes is either.
+        if (!std::isfinite(sw.osc.rate))  sw.osc.rate  = 0.0f;
+        if (!std::isfinite(sw.osc.phase)) sw.osc.phase = 0.0f;
+        if (!sw.osc.on()) sw.osc = CBEngine::SweepOsc{};   // unknown shape: straight
+    }
 }
 
-void writeSweepLine(std::ostream& out, const RoqSweep& sw, bool withHold) {
+void writeSweepLine(std::ostream& out, const RoqSweep& sw, bool withHold, bool withOsc) {
     out << sw.sliderIdx << " "
         << sw.startPat  << " " << sw.startStep << " " << sw.startVal << " "
         << sw.endPat    << " " << sw.endStep   << " " << sw.endVal;
     if (withHold) out << " " << (sw.hold ? 1 : 0);
+    if (withOsc && sw.osc.on())
+        out << " " << sw.osc.shape << " " << (sw.osc.hz ? 1 : 0)
+            << " " << floatToken(sw.osc.rate) << " " << floatToken(sw.osc.phase);
     out << "\n";
+}
+
+// Sweeps on the PWM LFO's own controls (targets 14..16) went with it. They
+// were never in a release, so nothing is lost but a test song or two.
+void dropRetired(std::vector<RoqSweep>& sweeps) {
+    std::vector<RoqSweep> kept;
+    kept.reserve(sweeps.size());
+    for (const auto& s : sweeps)
+        if (!CBEngine::sweepTargetRetired(s.sliderIdx)) kept.push_back(s);
+    sweeps.swap(kept);
+}
+
+// The PWM LFO of v7..v14, as the oscillating sweeps that replace it (TODO Y3):
+// for each destination with a depth, a triangle at the same rate in Hz, the
+// same depth, starting with the song and holding to its end and beyond.
+// With nothing else changed, the engine renders that exactly as the LFO did
+// in a fresh engine - the WAV export's case - and the tester proves it. In
+// the app it differs on purpose: the LFO was free-running, so every play of
+// a song caught it somewhere else; the sweep's phase is the song position's.
+//
+// Run on every load, not only below v15: a hand-edited newer file with the
+// LFO lines set should not get a modulator that nothing can show or edit.
+//
+// A rate of 0 was the LFO switched off, and then nothing is touched - not even
+// depths left set behind it, which were inert and stay inert. One of the
+// testers' songs has exactly that, and a song that never used the LFO should
+// re-save to the bytes it was loaded from.
+void foldPwmLfo(RoqSong& song) {
+    if (!(song.pwmLfoRate > 0.0f)) return;
+    {
+        const int lastPat  = song.patterns.empty() ? 0 : (int)song.patterns.size() - 1;
+        const int lastStep = song.patterns.empty() ? 15 : song.patterns.back().lastStep;
+        auto add = [&](int target, float depth) {
+            if (!(depth > 0.0f)) return;   // the engine skipped a zero depth too
+            RoqSweep sw;
+            sw.sliderIdx = target;
+            sw.startPat = 0;       sw.startStep = 0;
+            sw.endPat   = lastPat; sw.endStep   = lastStep;
+            // The depth slider stored whole percents, and n / 100.0f is what
+            // the engine gets back from n here (oscDepthAt in CBEngine.cpp).
+            sw.startVal = sw.endVal = (int)std::lround(depth * 100.0f);
+            sw.hold = true;
+            sw.osc.shape = (int)CBEngine::OscShape::Triangle;
+            sw.osc.hz    = true;
+            sw.osc.rate  = song.pwmLfoRate;
+            sw.osc.phase = 0.0f;
+            song.sweeps.push_back(sw);
+        };
+        add(8,  song.pwmLfoDepth);         // Main PWM
+        add(11, song.pwmLfoDupletDepth);   // Duplet PWM
+    }
+    song.pwmLfoRate = song.pwmLfoDepth = song.pwmLfoDupletDepth = 0.0f;
 }
 
 bool readLine(std::ifstream& in, std::string& out) {
@@ -266,6 +368,8 @@ std::optional<RoqSong> loadRoq(const std::string& path, std::string& error) {
         readSweepLine(line, sw);
         song.sweeps.push_back(sw);
     }
+    dropRetired(song.sweeps);
+    foldPwmLfo(song);
     return song;
 }
 
@@ -276,8 +380,10 @@ std::optional<RoqSong> loadRoq(const std::string& path, std::string& error) {
 // a reader cannot absorb positionally. Keeping this a function of the *content*
 // is what lets an ordinary 16-step song stay loadable by pre-v10 builds.
 static int neededVersion(const RoqSong& song) {
-    // v14: any sweep on a target beyond the original seven. Checked first
-    // because 14 implies everything below it.
+    // v15: any oscillating sweep. Checked first because 15 implies
+    // everything below it.
+    if (anyOsc(song.sweeps)) return 15;
+    // v14: any sweep on a target beyond the original seven.
     for (const auto& s : song.sweeps) {
         if (s.sliderIdx >= CBEngine::kMainSweepTargets) return 14;
     }
@@ -376,7 +482,7 @@ bool saveRoq(const std::string& path, const RoqSong& song, std::string& error) {
     out << song.sweeps.size() << "\n";
     // The hold token only at v13, mirroring neededVersion(): a file stamped
     // lower keeps exactly the seven-token lines it always had.
-    for (const auto& sw : song.sweeps) writeSweepLine(out, sw, version >= 13);
+    for (const auto& sw : song.sweeps) writeSweepLine(out, sw, version >= 13, version >= 15);
 
     if (!out) { error = "write failed"; return false; }
     return true;
@@ -408,6 +514,7 @@ std::optional<std::vector<RoqSweep>> loadHape(const std::string& path, std::stri
         readSweepLine(line, sw);
         out.push_back(sw);
     }
+    dropRetired(out);
     return out;
 }
 
@@ -415,10 +522,14 @@ bool saveHape(const std::string& path, const std::vector<RoqSweep>& sweeps, std:
     std::ofstream out(path);
     if (!out) { error = "cannot create file"; return false; }
     out << kHapeMagic << "\n";
-    const bool hold = anyHold(sweeps);
-    out << (hold ? kHapeHoldVersion : kHapeVersion) << "\n";
+    // The same content rule as .roq: the lowest version that carries it all.
+    // An oscillating sweep needs the hold token in front of its own, so 15
+    // writes both.
+    const bool osc  = anyOsc(sweeps);
+    const bool hold = osc || anyHold(sweeps);
+    out << (osc ? kHapeOscVersion : hold ? kHapeHoldVersion : kHapeVersion) << "\n";
     out << sweeps.size() << "\n";
-    for (const auto& sw : sweeps) writeSweepLine(out, sw, hold);
+    for (const auto& sw : sweeps) writeSweepLine(out, sw, hold, osc);
     if (!out) { error = "write failed"; return false; }
     return true;
 }

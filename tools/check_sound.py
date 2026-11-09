@@ -25,9 +25,10 @@ What it checks, for every case:
     writer - and the version it stamps - cannot change unnoticed either.
   * Relations that must hold whatever the manifest says (see RELATIONS).
 
-The local modules/ folder (not in git) is rendered too when it is present;
-each module's line is in the manifest, and a missing folder is reported as
-skipped rather than failed.
+The songs in tests/songs/ are rendered from their files, and so is the local
+modules/ folder (not in git) when it is present; each one's line is in the
+manifest, and a missing modules/ folder is reported as skipped rather than
+failed.
 
 When a hash differs and a reference driver exists (--update copies the
 driver to build/sound/reference/), both are re-run on the failing cases and
@@ -55,6 +56,10 @@ DEFAULT_EXE = os.path.join(ROOT, "build", "tests", "Release", "screambox_render.
 WORK = os.path.join(ROOT, "build", "sound")
 REFERENCE_EXE = os.path.join(WORK, "reference", "screambox_render.exe")
 MODULES = os.path.join(ROOT, "modules")
+# Songs kept in git for the file path: written by older builds, so that what a
+# newer build makes of them on load (the v15 PWM LFO fold, say) is tested on
+# the bytes those builds really wrote.
+SONGS = os.path.join(ROOT, "tests", "songs")
 
 # Fields that must match the manifest. sr, tempo, loop, pats and frames are
 # compared too: a case whose setup changed is a different case, not a
@@ -66,6 +71,10 @@ RELATIONS = [
     # Classic is the stock 2004 clipper: gain, tone and level are inert while
     # it is selected, so the shipped sound is unchanged by their settings.
     ("stock", "dist_classic", "Classic distortion ignores gain, tone and level"),
+    # An oscillating sweep adds depth x wave to the target; at depth 0 it must
+    # add nothing - on a per-step target and on the per-sample PWM path alike.
+    ("stock", "osc_zero_cutoff", "an oscillating sweep of depth 0 changes nothing"),
+    ("stock", "osc_zero_pwm", "an oscillating sweep of depth 0 changes nothing, per sample"),
 ]
 
 
@@ -89,13 +98,14 @@ def parse(stdout):
 
 
 def module_paths():
-    if not os.path.isdir(MODULES):
-        return []
     found = []
-    for dirpath, _, files in os.walk(MODULES):
-        for f in files:
-            if f.lower().endswith((".roq", ".cb")):
-                found.append(os.path.relpath(os.path.join(dirpath, f), ROOT).replace("\\", "/"))
+    for top in (SONGS, MODULES):
+        if not os.path.isdir(top):
+            continue
+        for dirpath, _, files in os.walk(top):
+            for f in files:
+                if f.lower().endswith((".roq", ".cb")):
+                    found.append(os.path.relpath(os.path.join(dirpath, f), ROOT).replace("\\", "/"))
     return sorted(found)
 
 
@@ -344,7 +354,7 @@ def main():
     differing, missing, extra, skipped = [], [], [], 0
     for key, expected in sorted(want.items()):
         if key not in results:
-            if key.startswith("file ") and not have_modules:
+            if key.startswith("file modules/") and not have_modules:
                 skipped += 1
             else:
                 missing.append(key)

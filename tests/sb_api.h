@@ -45,12 +45,20 @@ typedef struct SbPattern {
     SbStep steps[SB_MAX_STEPS];
 } SbPattern;
 
-/* A sweep as .roq stores it: target 0..23, values in the target's stored units. */
+/* Oscillating-sweep shapes (CBEngine::OscShape). */
+enum { SB_OSC_NONE, SB_OSC_TRIANGLE, SB_OSC_SINE, SB_OSC_SQUARE, SB_OSC_SAW_UP, SB_OSC_SAW_DOWN };
+
+/* A sweep as .roq stores it: target 0..23, values in the target's stored units.
+ * With osc_shape set it oscillates (.roq v15) and the two values are its depth;
+ * osc_hz says whether osc_rate is in Hz or in steps per cycle, and osc_phase
+ * is the start phase in cycles. */
 typedef struct SbSweep {
     int target;
     int start_pat, start_step, start_val;
     int end_pat, end_step, end_val;
     int hold;
+    int osc_shape, osc_hz;
+    float osc_rate, osc_phase;
 } SbSweep;
 
 typedef struct SbSong {
@@ -66,7 +74,9 @@ void sb_song_defaults(SbSong* s);
 
 /* Files. Each returns 1 on success, 0 on failure with a message in err. A .cb
  * import brings patterns and tempo only; the 2002 sweeps are inert, as in the
- * program. A .hape load replaces s->sweeps and leaves the rest alone. */
+ * program. A .hape load replaces s->sweeps and leaves the rest alone. A .roq
+ * load folds a pre-v15 PWM LFO into oscillating sweeps, as the program does;
+ * SB_PWM_LFO_* are read by nothing else. */
 int sb_song_load_roq(const char* path, SbSong* s, char* err, int errlen);
 int sb_song_save_roq(const char* path, const SbSong* s, char* err, int errlen);
 int sb_song_load_cb(const char* path, SbSong* s, char* err, int errlen);

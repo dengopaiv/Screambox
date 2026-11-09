@@ -25,6 +25,10 @@ struct RoqSweep {
     // Keep the end value after the sweep ends, until the next sweep on the
     // same slider starts. v13; an eighth token on the sweep line.
     bool hold = false;
+    // An oscillating sweep (v15): shape, rate unit, rate and start phase, as
+    // four more tokens. Shape None, the default, is an ordinary sweep and
+    // writes no tokens. See CBEngine::SweepOsc for what the fields mean.
+    CBEngine::SweepOsc osc;
 };
 
 struct RoqSong {
@@ -46,9 +50,11 @@ struct RoqSong {
     float dupletPWM = 0.5f;     // Duplet square duty-cycle (independent of main PWM).
     float dupletDetune = 0.0f;  // -1..+1 = ±1200 cents detune.
     float dupletLevel = 0.0f;   // Duplet mix level.
-    // Shared triangle PWM LFO: one rate, one depth per destination.
-    // Rate is stored in Hz, never as a slider position, so the UI's
-    // exponential taper can change later without repitching saved songs.
+    // The shared triangle PWM LFO of v7..v14: one rate in Hz, one depth per
+    // destination. RETIRED in v15 - loadRoq() folds a non-zero LFO into
+    // oscillating sweeps on Main PWM and Duplet PWM and sets these to 0, and
+    // they are written as 0 from then on. The lines stay because the header
+    // is positional (the same reason as `impulsive` below).
     float pwmLfoRate = 0.0f;        // Hz, 0..100. 0 = off.
     float pwmLfoDepth = 0.0f;       // 0..1 into the main PWM.
     float pwmLfoDupletDepth = 0.0f; // 0..1 into the duplet PWM.
@@ -88,6 +94,8 @@ struct RoqSong {
     std::vector<RoqSweep>  sweeps;
 };
 
+// Also folds a pre-v15 PWM LFO into oscillating sweeps and drops sweeps on the
+// retired targets 14..16 - see foldPwmLfo() in RoqIO.cpp.
 std::optional<RoqSong> loadRoq(const std::string& path, std::string& error);
 bool                   saveRoq(const std::string& path, const RoqSong& song, std::string& error);
 
