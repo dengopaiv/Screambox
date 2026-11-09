@@ -211,7 +211,8 @@ or a straight sweep on the same step - and its start and end values are its *dep
 is what the PWM LFO did (it wobbled around the PWM slider, swept or not), so a song with
 both a PWM sweep and the LFO converts exactly, which the study's model could not do; a ramp
 under a wobble is still one straight sweep plus one LFO; and the depth can fade in. Straight
-sweeps and LFOs are chosen separately per step and never overlap each other.
+sweeps and LFOs are chosen separately per step and never overlap each other. **Confirmed by
+Dengo 2026-11-09: keep the riding model.** Next: Dengo tests by ear before `rework` merges.
 
 **What changed where:**
 - Engine: `SweepOsc` on `ParamSweep`; `evaluateSweeps` chooses the straight and the
