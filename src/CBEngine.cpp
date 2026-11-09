@@ -512,6 +512,8 @@ void CBEngine::applyTransportReset(TransportReset r) {
     // Oscillating sweeps likewise; and the next step evaluated is a
     // discontinuity, so an Hz-mode phase is re-derived from the song position.
     for (auto& r : osc_) r.on = false;
+    for (auto& l : line_) { l.on = false; l.moving = false; }
+    sweepsMoving_ = false;
     oscHzN_ = 0;
     lastSweepPos_ = -2;
     stepFrac_ = 0.0;
@@ -1009,9 +1011,10 @@ void CBEngine::process(float* out, int frames) {
             long beforeEnd = 0;
             float t = 0.0f;
             // The oscillating sweep, chosen by the same rule.
+            long coverStart = 0, coverEnd = 0;   // the covering straight sweep's span
             const ParamSweep* oCover = nullptr;
             const ParamSweep* oBefore = nullptr;
-            long oBeforeEnd = 0, oStart = 0;
+            long oBeforeEnd = 0, oStart = 0, oEnd = 0;
             int  oIdx = -1;
             float oT = 0.0f;
             for (size_t si = 0; si < list.size(); ++si) {
@@ -1021,7 +1024,7 @@ void CBEngine::process(float* out, int frames) {
                 if (sw.osc.on()) {
                     if (oCover) continue;
                     if (cur >= start && cur <= end) {
-                        oCover = &sw; oStart = start; oIdx = (int)si;
+                        oCover = &sw; oStart = start; oEnd = end; oIdx = (int)si;
                         oT = (end > start) ? (float)(cur - start) / (float)(end - start) : 0.0f;
                     } else if (end < cur && (!oBefore || end > oBeforeEnd)) {
                         oBefore = &sw; oBeforeEnd = end; oStart = start; oIdx = (int)si;
@@ -1031,12 +1034,24 @@ void CBEngine::process(float* out, int frames) {
                 if (cover) continue;
                 if (cur >= start && cur <= end) {
                     cover = &sw;
+                    coverStart = start; coverEnd = end;
                     t = (end > start) ? (float)(cur - start) / (float)(end - start) : 0.0f;
                     continue;
                 }
                 if (end < cur && (!before || end > beforeEnd)) { before = &sw; beforeEnd = end; }
             }
             const int id = int(sweepTargetParam(k));
+            // What glideSweeps() needs to move this step's value on, sample by
+            // sample, to where the next step starts. Not on the sweep's last
+            // step: it reaches its end value at that step's first sample and
+            // holds it, as it always has.
+            LineRun& L = line_[k];
+            L.on     = cover || (before && before->hold);
+            L.moving = cover && coverEnd > coverStart && cur < coverEnd;
+            if (L.moving) {
+                L.a = (float)cover->startVal;           L.b    = (float)cover->endVal;
+                L.stepsIn = (float)(cur - coverStart);   L.span = (float)(coverEnd - coverStart);
+            }
             // The straight part, unchanged.
             if (!cover && !(before && before->hold)) {
                 sweptOn_[id] = false;
@@ -1062,6 +1077,8 @@ void CBEngine::process(float* out, int frames) {
                 sweptOn_[id]  = true;
             }
 
+            if (L.on) L.val = sweptVal_[id];
+
             // The oscillating part.
             OscRun& r = osc_[k];
             const ParamSweep* o = oCover ? oCover : ((oBefore && oBefore->hold) ? oBefore : nullptr);
@@ -1078,6 +1095,13 @@ void CBEngine::process(float* out, int frames) {
             r.phase0  = (double)o->osc.phase;
             r.depth   = (double)(oCover ? oscDepthAt(k, (float)o->startVal, (float)o->endVal, oT)
                                         : oscDepthAt(k, (float)o->endVal, (float)o->endVal, 1.0f));
+            // A depth that travels glides like a straight sweep's value. A
+            // constant one - every converted PWM LFO - is left alone.
+            r.depthMoving = oCover && oEnd > oStart && cur < oEnd && o->startVal != o->endVal;
+            if (r.depthMoving) {
+                r.da = (float)o->startVal;          r.db    = (float)o->endVal;
+                r.dStepsIn = (float)(cur - oStart); r.dSpan = (float)(oEnd - oStart);
+            }
             const double rate = o->osc.rate > 0.0f ? (double)o->osc.rate : 0.0;
             if (r.hz) {
                 // The PWM LFO's own increment, expression for expression. At
@@ -1104,6 +1128,14 @@ void CBEngine::process(float* out, int frames) {
             sweptVal_[id] = (float)std::clamp(centre + r.depth * oscWave(r.shape, ph), lo, hi);
             sweptOn_[id]  = true;
         }
+        sweepsMoving_ = false;
+        for (int k = 0; k < kSweepTargets; ++k) {
+            const OscRun& r = osc_[k];
+            if (line_[k].moving || (r.on && (!sweepTargetPerSample(k) || r.depthMoving))) {
+                sweepsMoving_ = true;
+                break;
+            }
+        }
     };
     // The phase an oscillating sweep has at this sample, per-sample targets
     // only. Hz mode reads the accumulator, already advanced for this sample.
@@ -1112,6 +1144,50 @@ void CBEngine::process(float* out, int frames) {
         if (!(r.spc > 0.0)) return frac1(r.phase0);
         return frac1(r.phase0 + ((double)r.stepsIn
                                  + (double)samplesIntoStep_ / (double)samplesPerStep_) / r.spc);
+    };
+    // Every sweep that moves, moved to where this sample is in the step - the
+    // glide (Dengo, 2026-11-09: a sine LFO on Cutoff was a staircase, and so
+    // was a ramp). Called only while sweepsMoving_, and never on a step's
+    // first sample, where evaluateSweeps has just set the very same values:
+    // so the value at every step start is what it always was, and a song
+    // without a moving sweep runs none of this. The expressions are
+    // evaluateSweeps' own with the step count made fractional.
+    auto glideSweeps = [&]() {
+        const float ff = (float)samplesIntoStep_ / (float)samplesPerStep_;
+        for (int k = 0; k < kSweepTargets; ++k) {
+            LineRun& L = line_[k];
+            OscRun&  r = osc_[k];
+            if (!L.moving && !r.on) continue;
+            const int id = int(sweepTargetParam(k));
+            if (L.moving) {
+                const float tt = (L.stepsIn + ff) / L.span;
+                if (k >= kMainSweepTargets) {
+                    L.val = sweepValueNew(k, L.a, L.b, tt);
+                } else {
+                    const float raw = L.a + (L.b - L.a) * tt;
+                    float v = raw / 100.0f;
+                    const CbParam p = kSweepDests[k].id;
+                    const bool bipolar = p == CbParam::Resonance || p == CbParam::EnvMod
+                                      || p == CbParam::Tuning;
+                    if (!bipolar && v < 0.0f) v = 0.0f;
+                    L.val = v;
+                }
+                sweptVal_[id] = L.val;   // the centre; an LFO below moves it
+            }
+            if (!r.on) continue;
+            if (r.depthMoving)
+                r.depth = (double)oscDepthAt(k, r.da, r.db, (r.dStepsIn + ff) / r.dSpan);
+            // The PWM targets' wave is computed in the threshold code itself,
+            // from the centre the Voice carries.
+            if (sweepTargetPerSample(k)) continue;
+            const double centre = L.on ? (double)L.val
+                                       : (double)params_[id].load(std::memory_order_relaxed);
+            double lo, hi;
+            oscRange(k, lo, hi);
+            sweptVal_[id] = (float)std::clamp(centre + r.depth * oscWave(r.shape, oscPhaseNow(r)),
+                                              lo, hi);
+            sweptOn_[id]  = true;
+        }
     };
 
     // Envelope constants (from SilverBox.cpp wwelti branch)
@@ -1280,6 +1356,23 @@ void CBEngine::process(float* out, int frames) {
             }
         }
 
+        // --- sweeps that move within the step ---
+        // Hz-mode LFO phases advance here, every sample, wherever their target
+        // is evaluated (one comparison when none runs). Then everything that
+        // glides is moved to this sample and the knob values derived from it
+        // again - the same recompute a step boundary does, per sample, for as
+        // long as something is moving and not otherwise.
+        for (int j = 0; j < oscHzN_; ++j) {
+            OscRun& r = osc_[oscHz_[j]];
+            r.acc += r.inc;
+            if (r.acc >= 1.0) r.acc -= 1.0;
+        }
+        if (running && sweepsMoving_ && samplesIntoStep_ > 0) {
+            glideSweeps();
+            K = knobsNow();
+            V = voiceNow();
+        }
+
         // --- DSP per sample (from wwelti loop) ---
         boxMEG_ += (boxMEG_c0 - boxMEG_) * boxMEG_c1;
         boxGate_ += (gate_c0 - boxGate_) * gate_c1;
@@ -1342,16 +1435,8 @@ void CBEngine::process(float* out, int frames) {
             }
         }
 
-        // --- oscillating sweeps (what was the PWM LFO) ---
-        // Hz-mode phases advance here, every sample, wherever their target is
-        // evaluated: a per-step target reads its phase at the step boundary,
-        // and that has to be the phase the song position has reached. With
-        // none running this is one comparison.
-        for (int j = 0; j < oscHzN_; ++j) {
-            OscRun& r = osc_[oscHz_[j]];
-            r.acc += r.inc;
-            if (r.acc >= 1.0) r.acc -= 1.0;
-        }
+        // --- oscillating sweeps on the PWM targets (what was the PWM LFO) ---
+        // Their phases advanced above, with every other LFO's.
         // The two duty thresholds fall back to the hoisted block constants
         // when no oscillating sweep is on them, which is the stock path.
         // The expressions are the PWM LFO's, verbatim: centre plus depth

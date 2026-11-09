@@ -441,6 +441,18 @@ static void cRingLow(SbSong* s, Opt* o) {
 static void cRingHigh(SbSong* s, Opt* o) {
     (void)o; basicSong(s); s->params[SB_RING_HZ] = 2000.0f; s->params[SB_RING_AMOUNT] = 1.0f;
 }
+/* A straight sweep that does not change its value still runs the per-sample
+ * glide (it is "moving": start and end are different steps). It must render
+ * identical to the slider at that value - RELATIONS in check_sound.py hold
+ * these equal to cutoff_high and ring_high. One main slider, one geometric. */
+static void cGlideConstCutoff(SbSong* s, Opt* o) {
+    (void)o; basicSong(s);
+    addSweep(s, 1, 0, 0, 100, 1, 15, 100, 0);
+}
+static void cGlideConstRing(SbSong* s, Opt* o) {
+    (void)o; basicSong(s); s->params[SB_RING_AMOUNT] = 1.0f;
+    addSweep(s, 22, 0, 0, 200000, 1, 15, 200000, 0);
+}
 static void cRich(SbSong* s, Opt* o) { (void)o; basicSong(s); richPatch(s); }
 static void cRich48k(SbSong* s, Opt* o) { cRich(s, o); o->sr = 48000.0; }
 static void cRich96k(SbSong* s, Opt* o) { cRich(s, o); o->sr = 96000.0; }
@@ -556,6 +568,7 @@ static const Case kCases[] = {
     {"osc_tuning_hz", cOscTuningHz, -1}, {"osc_pwm_saws_48k", cOscPwmSaws, -1},
     {"osc_starts_late", cOscStartsLate, -1}, {"osc_loop_hz", cOscLoopHz, -1},
     {"osc_zero_cutoff", cOscZeroCutoff, -1}, {"osc_zero_pwm", cOscZeroPwm, -1},
+    {"glide_const_cutoff", cGlideConstCutoff, -1}, {"glide_const_ring", cGlideConstRing, -1},
     {"dist_classic", cDistClassic, -1}, {"dist_rat", cDistRat, -1},
     {"dist_screamer", cDistScreamer, -1}, {"dist_plus", cDistPlus, -1},
     {"dist_fuzz", cDistFuzz, -1},      {"fuzz_ring_rests", cFuzzRingRests, -1},

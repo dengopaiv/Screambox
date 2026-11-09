@@ -206,8 +206,10 @@ public:
     // sweep started whenever playback does not simply move on to the next
     // step (Play, a jump, the wrap back to pattern 1, a loop). So every play
     // of a song and every export of it sound the same.
-    // Evaluated once per step, like any sweep, except for the per-sample
-    // targets above, whose wave moves within the step.
+    // Chosen and set up once per step, like any sweep, and then moved every
+    // sample (glideSweeps in process). The per-sample targets above compute
+    // their wave in the PWM threshold code itself; every other target gets
+    // its value written per sample and the knobs derived again.
     enum class OscShape : int { None = 0, Triangle, Sine, Square, SawUp, SawDown, Count };
     struct SweepOsc {
         int   shape = 0;      // OscShape
@@ -428,8 +430,29 @@ private:
         long   start = 0;     // the sweep's absolute start step
         long   stepsIn = 0;   // steps since start, at this step
         int    which = -1;    // its index in the target's sweep list
+        // A depth that travels (start depth != end depth) glides per sample:
+        // depth at (dStepsIn + fraction of this step) / dSpan.
+        bool   depthMoving = false;
+        float  da = 0.0f, db = 0.0f, dStepsIn = 0.0f, dSpan = 1.0f;
     };
     OscRun osc_[kSweepTargets];
+    // The straight sweep on each target, as glideSweeps() needs it. Its value
+    // at a step's first sample is the one evaluateSweeps sets, exactly as it
+    // always was; WITHIN the step it now glides towards the next step's value
+    // instead of holding (Dengo, 2026-11-09), so a ramp is a ramp and not a
+    // staircase. `val` is the value now - the centre an LFO on the target
+    // moves around.
+    struct LineRun {
+        bool  on = false;      // a straight sweep (or a held end) is in force
+        bool  moving = false;  // ...and it is between its start and its last step
+        float a = 0.0f, b = 0.0f, stepsIn = 0.0f, span = 1.0f, val = 0.0f;
+    };
+    LineRun line_[kSweepTargets];
+    // Anything that has to be recomputed every sample: a straight sweep that
+    // is moving, an LFO on a per-step target, or an LFO depth that travels.
+    // False - every song without sweeps - and the sample loop does nothing new,
+    // which is the off-path proof (invariant 4).
+    bool sweepsMoving_ = false;
     // The Hz-mode oscillators, whose accumulators advance every sample. Kept
     // as a short list so that with none running the sample loop pays one
     // comparison.

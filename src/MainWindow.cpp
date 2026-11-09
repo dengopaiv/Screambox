@@ -1032,9 +1032,9 @@ static const wchar_t kSweepHelp[] =
     L"- Starting phase, in degrees: where in its swing it starts. 0 starts in the middle going "
     L"up, 180 in the middle going down.\r\n"
     L"- Hold keeps it swinging after its end, until the next LFO on this slider.\r\n"
-    L"An LFO may cover the same steps as a straight sweep; two LFOs on one slider may not. Main "
-    L"PWM and Duplet PWM follow an LFO smoothly; every other slider moves once a step, so a fast "
-    L"LFO there comes out in steps. The Modulation dialog (Ctrl+M on the main window) adds a "
+    L"An LFO may cover the same steps as a straight sweep; two LFOs on one slider may not. Both "
+    L"kinds glide smoothly, sample by sample, rather than stepping from one step to the next. "
+    L"The Modulation dialog (Ctrl+M on the main window) adds a "
     L"ready-made LFO to the whole song.\r\n\r\n"
     L"ADDING MORE\r\n"
     L"Sweep number lists the sweeps on this slider, then (new sweep). Choose (new sweep) and the "
@@ -1058,9 +1058,9 @@ static const wchar_t kModulationHelp[] =
     L"remove it in the sweep editor.\r\n\r\n"
     L"F5 to F8 play and stop as on the main window, so you can listen while you work.";
 
-// The shapes Generate draws. Each is sampled once per step - the rate sweeps
-// run at - and the samples are joined into as few straight sweeps as describe
-// them exactly. The result is ordinary sweeps: nothing about a shape reaches
+// The shapes Generate draws. Each is sampled once per step and the samples
+// are joined into as few straight sweeps as describe them exactly - which
+// then glide between those samples like any straight sweep. The result is ordinary sweeps: nothing about a shape reaches
 // the engine or the file, so it costs no format change and every one of the
 // pieces can be edited afterwards like any other sweep.
 enum class SweepShape { Ramp, Triangle, Alternate };

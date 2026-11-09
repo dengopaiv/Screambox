@@ -141,16 +141,24 @@ shows up later as "it sounds different now" with no obvious cause.
    keep the hoisted version as the off-path fast path.
 5. **Skip work entirely when a feature is off**, don't just multiply by zero. The noise
    RNG must not advance at level 0, or invariant 4 stops holding for it.
-6. Sweeps are evaluated once per sequencer step. **The one exception is an oscillating
-   sweep (an LFO, v15) on a per-sample target** - `CBEngine::sweepTargetPerSample()`, today
-   Main PWM and Duplet PWM - whose wave is computed in the sample loop from the depth and
-   phase `evaluateSweeps` set up at the step. Adding a target to that set means giving it
-   a per-sample path in the loop with the hoisted value as its off path, as the PWM
-   thresholds have. Everything else about an LFO is per step.
+6. Sweeps are CHOSEN once per sequencer step and MOVE every sample. `evaluateSweeps` runs at
+   each step boundary: it picks the sweeps in force, sets each one's value for the step's
+   first sample - exactly the value a sweep has always had there - and records what
+   `glideSweeps()` needs to move it on. Within the step, `glideSweeps()` writes every moving
+   value for the sample (the step count made fractional) and `Knobs` / `Voice` are derived
+   again, every sample, for as long as `sweepsMoving_` says something moves (Dengo,
+   2026-11-09: a sine on Cutoff was a staircase, and so was a ramp). **The off path is
+   `sweepsMoving_ == false`**: no sweep moving, nothing per sample, and the render is
+   bit-identical to the engine before the glide. It is never called on a step's first
+   sample, which is what keeps step-start values exact. RELATIONS in `check_sound.py` hold
+   a constant gliding sweep (main slider and geometric) equal to the slider at that value.
+   - **Main PWM and Duplet PWM are different** (`CBEngine::sweepTargetPerSample()`): their
+     LFO wave is computed in the duty-threshold code, in double, from the centre the Voice
+     carries - the PWM LFO's own expressions. Writing it through `sweptVal_` instead would
+     round it to float and the converted LFO would no longer be bit-identical.
    - **Straight and oscillating sweeps are chosen separately** in `evaluateSweeps`: the
      straight one (or the slider) is the centre, the LFO is added to it and clamped to the
-     slider's range. A target with no LFO runs exactly the code it ran before v15. The
-     PWM LFO's expressions survive verbatim in the per-sample path (increment
+     slider's range. The PWM LFO's expressions survive verbatim in the per-sample path (increment
      `rate / sampleRate_`, accumulate, wrap at 1, the triangle, the clamp, the threshold) -
      that is what makes an old song's LFO, converted on load, bit-identical in a fresh
      engine. Change them and `tests/songs/lfo_*` tell you.
@@ -265,7 +273,7 @@ shows up later as "it sounds different now" with no obvious cause.
 
 ## How engine changes get verified
 
-**First, always: `python tools/check_sound.py`.** It renders 78 built-in cases, plus every
+**First, always: `python tools/check_sound.py`.** It renders 85 built-in cases, the songs in `tests/songs/`, plus every
 module under `modules/` when that folder is present, and compares them with
 `tests/golden/sound.manifest`. For each render it checks:
 - that renders at 32, 64, 512 and 1024 frames per block are identical;

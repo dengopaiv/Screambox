@@ -254,11 +254,16 @@ close them.
 
 How they behave, precisely:
 
-- **Evaluated at each step, in force from the step's first sample.** The value used to be
-  picked up only at the next audio buffer, so every note started with the previous step's
-  value for up to a buffer - longer on a sound card with bigger buffers. On Tuning that was
-  a pitch blip at every note; on Cutoff it landed on the attack. A sweep now renders the
-  same at every buffer size.
+- **They glide.** A sweep's value at each step's first sample is the one its line gives that
+  step, and within the step it moves on smoothly, sample by sample, towards the next step's -
+  a ramp is a ramp, not a staircase. (Until v15 it held one value per step. Gliding changed
+  how every song with sweeps sounds between step starts, by design.) A slider with no sweep
+  moving does none of this work, and renders exactly as before.
+- **In force from the step's first sample.** The value used to be picked up only at the
+  next audio buffer, so every note started with the previous step's value for up to a
+  buffer - longer on a sound card with bigger buffers. On Tuning that was a pitch blip at
+  every note; on Cutoff it landed on the attack. A sweep now renders the same at every
+  buffer size.
 - **Even per step.** A sweep moves the same amount at every step it covers, across
   patterns of any length. (It used to count each pattern as one unit, so a sweep over a
   4-step and a 16-step pattern spent half its travel in the short one.)
@@ -335,9 +340,10 @@ the sweep stops setting the value and starts *moving* it:
   later.
 - **Its phase follows the song position, not a free-running clock.** Every play of a song
   and every WAV export of it sound the same, and a looped pattern repeats exactly.
-- **Main PWM and Duplet PWM move every sample**, so an LFO there runs smoothly up to audio
-  rates - what the old PWM LFO did. **Every other slider moves once per step**, like any
-  sweep: an LFO there is sampled at the step rate, and a fast one comes out in stairs.
+- **Every LFO moves every sample**, so a sine on Cutoff is a smooth wobble and a fast one
+  on Tuning is a vibrato, not a staircase. On Main PWM and Duplet PWM it runs up to audio
+  rates - what the old PWM LFO did. Accent squelch is the one slider where this cannot be
+  heard: it is read only as an accented note starts.
 
 **The Modulation dialog** (`Ctrl+M`, or the *Modulation* button) lists every slider that
 can be swept, each read with what it carries - `Cutoff (2 sweeps, 1 LFO)`. **Enter** opens

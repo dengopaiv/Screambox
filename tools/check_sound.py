@@ -75,6 +75,10 @@ RELATIONS = [
     # add nothing - on a per-step target and on the per-sample PWM path alike.
     ("stock", "osc_zero_cutoff", "an oscillating sweep of depth 0 changes nothing"),
     ("stock", "osc_zero_pwm", "an oscillating sweep of depth 0 changes nothing, per sample"),
+    # A straight sweep glides within the step; one whose value never changes
+    # must still be exactly the slider at that value.
+    ("cutoff_high", "glide_const_cutoff", "a constant sweep glides to the same value"),
+    ("ring_high", "glide_const_ring", "a constant sweep on a geometric target glides to the same value"),
 ]
 
 

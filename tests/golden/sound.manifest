@@ -2,7 +2,7 @@
 # Every line is a sound that was accepted. Change this file only on purpose,
 # in the same commit as the change that legitimately moved the sound, and say
 # in that commit which lines moved and why.
-# Accepted 2026-11-09 from bf7ab18 plus uncommitted changes to src/.
+# Accepted 2026-11-09 from d3f2ba8 plus uncommitted changes to src/.
 #
 case accent_zero sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=9eb2601ba854b13f roq=3468716fe6afc0a9 hape=- resave=ok
 case comp_heavy sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=13ff9bad821c631b roq=0da2b60e5ea5a606 hape=- resave=ok
@@ -21,6 +21,8 @@ case duplet_square sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=78437
 case envmod_max sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=9f73267647d07dab roq=b86159e6c1820335 hape=- resave=ok
 case envmod_neg sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=e75a0e721b5d28ef roq=06c6150ba418d03e hape=- resave=ok
 case fuzz_ring_rests sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=357efa3af74ebd43 roq=cb79aa4c018dbadd hape=- resave=ok
+case glide_const_cutoff sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=1a2a727844557663 roq=5e78c772d15a69d8 hape=520ca45869c9f8ee resave=ok
+case glide_const_ring sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=ef2ccff2a99162bb roq=3a7e4c388bc9ff4a hape=0ff98ecc53556cf1 resave=ok
 case last_slide sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=b3f9bdee6feb2a4b roq=022f862eb027ce48 hape=- resave=ok
 case last_slide_loop sr=44100 tempo=140 loop=1 pats=16,16 frames=226800 hash=4efacfb195178cb3 roq=022f862eb027ce48 hape=- resave=ok
 case lfo_fast sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=88e9d5acdad2439f roq=05ce58b0307b591a hape=c4916179a7fba3a1 resave=ok
@@ -31,12 +33,12 @@ case loop sr=44100 tempo=140 loop=1 pats=16,16 frames=226800 hash=5edf8a2edfb993
 case mixed_lengths sr=44100 tempo=140 loop=0 pats=16,12t,4,23 frames=354375 hash=98d46a74ab2f41e7 roq=6692db36fd2c66bb hape=- resave=ok
 case mixed_lengths_48k sr=48000 tempo=140 loop=0 pats=16,12t,4,23 frames=385713 hash=e270c9037ee9402b roq=6692db36fd2c66bb hape=- resave=ok
 case noise sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=4deefeb705ec5a2f roq=5d4dbf88f8b3fef8 hape=- resave=ok
-case osc_cutoff_steps sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=0acd485b2874d617 roq=25bf3de9a6cce1d3 hape=574d55471fec2093 resave=ok
-case osc_loop_hz sr=44100 tempo=140 loop=1 pats=16,16 frames=226800 hash=baad2afd676943db roq=ec33bb5f3f0a55fb hape=e2d0e9fce3f8f4bb resave=ok
-case osc_on_ramp sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=25f12c6e0f327e4f roq=a58acb16e8da9318 hape=fdb01bd3e1cc8d58 resave=ok
-case osc_pwm_saws_48k sr=48000 tempo=140 loop=0 pats=16,12t,4,23 frames=385713 hash=c560eb6a21dc78a7 roq=23d6624545d1fe33 hape=fe997a65c607d21d resave=ok
-case osc_starts_late sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=9d382d8ea37cc94b roq=a70dea6cdb081d35 hape=a4e6393d52c7c32b resave=ok
-case osc_tuning_hz sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=702a6d5c03cdfa37 roq=43e10db93b1d2378 hape=57c1f8ce1f6de7b8 resave=ok
+case osc_cutoff_steps sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=7dfc7342d2ba3d17 roq=25bf3de9a6cce1d3 hape=574d55471fec2093 resave=ok
+case osc_loop_hz sr=44100 tempo=140 loop=1 pats=16,16 frames=226800 hash=6d881f7645848f57 roq=ec33bb5f3f0a55fb hape=e2d0e9fce3f8f4bb resave=ok
+case osc_on_ramp sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=2d1ed64d1676184b roq=a58acb16e8da9318 hape=fdb01bd3e1cc8d58 resave=ok
+case osc_pwm_saws_48k sr=48000 tempo=140 loop=0 pats=16,12t,4,23 frames=385713 hash=cf30af6c62197793 roq=23d6624545d1fe33 hape=fe997a65c607d21d resave=ok
+case osc_starts_late sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=e362343cfd44ec63 roq=a70dea6cdb081d35 hape=a4e6393d52c7c32b resave=ok
+case osc_tuning_hz sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=a65b0d6b3352627f roq=43e10db93b1d2378 hape=57c1f8ce1f6de7b8 resave=ok
 case osc_zero_cutoff sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=a527d1e987e50bbb roq=7250ccb99e37b8f0 hape=a3dee4171756f7b0 resave=ok
 case osc_zero_pwm sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=a527d1e987e50bbb roq=7811fa8a3a9a13e4 hape=7548e8dbc863f4a4 resave=ok
 case pitches sr=44100 tempo=140 loop=0 pats=16,16,16,16 frames=378000 hash=5db2881754788bdf roq=51a60f2385fb8bde hape=- resave=ok
@@ -57,30 +59,30 @@ case squelch_2 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=fcabfac99
 case stock sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=a527d1e987e50bbb roq=4ca7e7a952a8d590 hape=- resave=ok
 case stock_48k sr=48000 tempo=140 loop=0 pats=16,16 frames=246856 hash=2de3fc1aed0c18ff roq=4ca7e7a952a8d590 hape=- resave=ok
 case sub sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=f167ed1ab6c839a3 roq=e1f7c2d8f590832c hape=- resave=ok
-case sweep_all_48k sr=48000 tempo=140 loop=0 pats=16,16 frames=246856 hash=f0460da32fba1ee7 roq=95ec1bbeb3c77596 hape=2cd51badc8089080 resave=ok
-case sweep_hold sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=fb516dfec441c7f3 roq=d4efcc720b959f8f hape=00c7fa884f4bfdfd resave=ok
-case sweep_mixed sr=44100 tempo=140 loop=0 pats=16,12t,4,23 frames=354375 hash=a07c3932a4551a0f roq=ce02beb91a34ad3e hape=183664ad2af03843 resave=ok
-case sweep_t00 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=e80b082e57753297 roq=cab67c0db4dfb01a hape=565ea217b0e2a5f0 resave=ok
-case sweep_t01 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=916df36c807412af roq=2201abd243b8268f hape=d01746c700e10a1d resave=ok
-case sweep_t02 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=c37e6bce0f281ebf roq=adeb70ddfdb13e7b hape=26ce16e40ef73851 resave=ok
-case sweep_t03 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=2574f79875d0215f roq=e6668d673bbf3a7c hape=1ed0d40ecd036a52 resave=ok
-case sweep_t04 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=8380248079d40727 roq=05030fbf0e104546 hape=34e31835d9e312ec resave=ok
-case sweep_t05 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=46abf5e9423d768b roq=1fead6ed0bf2a8db hape=92d8949c4756dd89 resave=ok
-case sweep_t06 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=8a636e9bb12b20df roq=3e251b94de523427 hape=94d22e366dc8c33d resave=ok
+case sweep_all_48k sr=48000 tempo=140 loop=0 pats=16,16 frames=246856 hash=62553d648c10ea97 roq=95ec1bbeb3c77596 hape=2cd51badc8089080 resave=ok
+case sweep_hold sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=ba0d5307ed7ff24b roq=d4efcc720b959f8f hape=00c7fa884f4bfdfd resave=ok
+case sweep_mixed sr=44100 tempo=140 loop=0 pats=16,12t,4,23 frames=354375 hash=68466255252f2ab3 roq=ce02beb91a34ad3e hape=183664ad2af03843 resave=ok
+case sweep_t00 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=7b80846e32edcbef roq=cab67c0db4dfb01a hape=565ea217b0e2a5f0 resave=ok
+case sweep_t01 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=e973bdfdab738cd3 roq=2201abd243b8268f hape=d01746c700e10a1d resave=ok
+case sweep_t02 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=065289d112c422f7 roq=adeb70ddfdb13e7b hape=26ce16e40ef73851 resave=ok
+case sweep_t03 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=9db2288a10ce7f83 roq=e6668d673bbf3a7c hape=1ed0d40ecd036a52 resave=ok
+case sweep_t04 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=52ea3df34ee9d82b roq=05030fbf0e104546 hape=34e31835d9e312ec resave=ok
+case sweep_t05 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=f8a217746503bfe7 roq=1fead6ed0bf2a8db hape=92d8949c4756dd89 resave=ok
+case sweep_t06 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=32511e4e0991619b roq=3e251b94de523427 hape=94d22e366dc8c33d resave=ok
 case sweep_t07 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=033363a1da81223f roq=152ce76523a0e83c hape=94d8c81176a3ed6e resave=ok
-case sweep_t08 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=1de29e403c5f2473 roq=30814e3343edcc02 hape=e00111ff4ddcd898 resave=ok
-case sweep_t09 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=a871472b53dfdf27 roq=25ea53fb2088fa77 hape=a9179e67c7fff765 resave=ok
-case sweep_t10 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=d9fe8360f1ad8cff roq=395895f627df289d hape=8e37012d51e85c67 resave=ok
-case sweep_t11 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=9190775f14147c77 roq=bf9ff146d7e0c470 hape=6d29f9ab96535c72 resave=ok
-case sweep_t12 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=9c55c4f8af92b853 roq=4705794d2eabfb32 hape=4f2432668e94e304 resave=ok
-case sweep_t13 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=df219c98d67b49f3 roq=4576ba2b7f67194a hape=4fb87c483c4117d8 resave=ok
-case sweep_t17 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=55b3132f3debf4b7 roq=34d1c5874e09b7f6 hape=6e5463c55c55a174 resave=ok
-case sweep_t18 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=e97dbf6c98a0c8a3 roq=1258ed96eefe15e5 hape=c5744f6351b00cbf resave=ok
-case sweep_t19 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=74c3d5f57168ff4f roq=4942612e74daf718 hape=4becd54546cd3a0a resave=ok
-case sweep_t20 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=df31748bca3e77bb roq=30db8842d037627c hape=fc9e8ab0020781ea resave=ok
-case sweep_t21 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=63693ca246e2ea33 roq=12b26194729a9a19 hape=50839bb89d51df9f resave=ok
-case sweep_t22 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=564f17b733c0a93f roq=b67fff7d0e65dcfe hape=4dfb68df3a996dd8 resave=ok
-case sweep_t23 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=c8cd6ccf1ada1cb7 roq=931e3790f89b5e9b hape=083f3e06cbcfb73d resave=ok
+case sweep_t08 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=235025fdaae47fc7 roq=30814e3343edcc02 hape=e00111ff4ddcd898 resave=ok
+case sweep_t09 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=45d27362b8943a73 roq=25ea53fb2088fa77 hape=a9179e67c7fff765 resave=ok
+case sweep_t10 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=43b5a5528afe646f roq=395895f627df289d hape=8e37012d51e85c67 resave=ok
+case sweep_t11 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=cdc1ca875aa2a5f7 roq=bf9ff146d7e0c470 hape=6d29f9ab96535c72 resave=ok
+case sweep_t12 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=cbfe435b498b38bb roq=4705794d2eabfb32 hape=4f2432668e94e304 resave=ok
+case sweep_t13 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=5cdda17918d894f3 roq=4576ba2b7f67194a hape=4fb87c483c4117d8 resave=ok
+case sweep_t17 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=102663952ffe489b roq=34d1c5874e09b7f6 hape=6e5463c55c55a174 resave=ok
+case sweep_t18 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=49c39b689c982ca7 roq=1258ed96eefe15e5 hape=c5744f6351b00cbf resave=ok
+case sweep_t19 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=045d464733a8f3cf roq=4942612e74daf718 hape=4becd54546cd3a0a resave=ok
+case sweep_t20 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=fb55941435ad6f37 roq=30db8842d037627c hape=fc9e8ab0020781ea resave=ok
+case sweep_t21 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=c399b2a8ec107dfb roq=12b26194729a9a19 hape=50839bb89d51df9f resave=ok
+case sweep_t22 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=79d42c97c9f985bb roq=b67fff7d0e65dcfe hape=4dfb68df3a996dd8 resave=ok
+case sweep_t23 sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=8d72e0343162c223 roq=931e3790f89b5e9b hape=083f3e06cbcfb73d resave=ok
 case tempo_133_7_48k sr=48000 tempo=133.69999694824219 loop=0 pats=16,16 frames=258489 hash=d896855ce675f223 roq=fdc2b7ac23fa8991 hape=- resave=ok
 case tempo_300 sr=44100 tempo=300 loop=0 pats=16,16 frames=105840 hash=e7f4536b905290b3 roq=de051a9319c49dd6 hape=- resave=ok
 case tempo_60 sr=44100 tempo=60 loop=0 pats=16,16 frames=529200 hash=01885f1e32bb2fa7 roq=aa736ba13d4fcc23 hape=- resave=ok
@@ -200,6 +202,6 @@ file modules_time_for_acid_timeboxer.cb sr=44100 tempo=135 loop=0 pats=16 frames
 file modules_tracid.cb sr=44100 tempo=140 loop=0 pats=16 frames=151200 hash=2349fb7bbc187a13 roq=- hape=- resave=-
 file tests_songs_lfo_fast_v9.roq sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=88e9d5acdad2439f roq=- hape=- resave=differs
 file tests_songs_lfo_mid_v9.roq sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=2dc292f0ce4c13e3 roq=- hape=- resave=differs
-file tests_songs_lfo_pwm_sweep_v14.roq sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=1de29e403c5f2473 roq=- hape=- resave=differs
+file tests_songs_lfo_pwm_sweep_v14.roq sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=235025fdaae47fc7 roq=- hape=- resave=differs
 file tests_songs_lfo_rich_v11.roq sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=489aa565df102037 roq=- hape=- resave=differs
 file tests_songs_lfo_slow_v9.roq sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=86e568a5bddc2b23 roq=- hape=- resave=differs

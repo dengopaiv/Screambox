@@ -238,6 +238,25 @@ on one slider still may not overlap - only a straight sweep and an LFO may.
 sentence whenever the LFO wave changes, and an opening line in the Modulation dialog.
 Driven in the app, including the patterns 1-4 then 5 case.
 
+**Sweeps glide** (Dengo, same day: "recalculate", and ramps too). Every sweep is still chosen
+at the step boundary and has its old value at each step's first sample; within the step
+`glideSweeps()` moves it on per sample and the knobs are derived again per sample, while
+anything moves. Main PWM and Duplet PWM keep their own per-sample LFO path (bit-exact old
+LFO). **Manifest lines moved, on purpose:** every case with a straight sweep that moves
+(`sweep_t00`-`t06`, `t08`-`t13`, `t17`-`t23`, `sweep_hold`, `sweep_mixed`,
+`sweep_all_48k`), every LFO on a per-step slider (`osc_cutoff_steps`, `osc_on_ramp`,
+`osc_tuning_hz`, `osc_starts_late`, `osc_loop_hz`), the travelling LFO depth in
+`osc_pwm_saws_48k`, and `tests/songs/lfo_pwm_sweep_v14` (a PWM ramp under the LFO). Each
+first differs one sample into the sweep's first step (a few samples where the parameter
+acts through a smoother or only at an edge); before that, every render is unchanged.
+**Did not move:** the converted LFO (`lfo_*`, `rich*`, the other `tests/songs/`), every
+module, every song without sweeps - and `sweep_t07`, Accent squelch, which is read only as
+an accented note starts, so gliding it cannot be heard. New RELATIONS: a constant gliding
+sweep on Cutoff and on Ring frequency equals the slider at that value.
+**Not verified - needs ears:** that gliding Decay, Resonance and the effect sliders sound
+right within a note, and the CPU cost on a slow machine (every moving sweep re-derives
+the knobs and the effect coefficients each sample).
+
 **What changed where:**
 - Engine: `SweepOsc` on `ParamSweep`; `evaluateSweeps` chooses the straight and the
   oscillating sweep separately; `osc_` per target, Hz phases accumulated per sample and
