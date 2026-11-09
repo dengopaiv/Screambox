@@ -410,7 +410,8 @@ engine.
 
 **What it buys.** Nothing audible: the sound is identical by construction. What it does buy
 is an engine with a plain C ABI. **CLAP is a C plugin API**, so a C engine is the direct
-path to a plugin, as well as to other hosts and other languages.
+path to a plugin, as well as to other hosts and other languages. (A plugin is not a goal -
+Dengo, 2026-11-09.)
 
 **Recommendation at study time** (superseded by Dengo's decision to port the whole
 program): port only the engine to C17 on MSVC behind a C header. The engine-first order still
@@ -466,9 +467,16 @@ existing C++ program.
   C-style now and move nearly verbatim. **`wwelti_IIR_IIRlp3pole` stays byte for byte**
   (invariant 2); only its file and language change.
 - **`SongData` becomes fixed-capacity arrays**, so invariant 3 (no allocation on the audio
-  thread) is structural. The capacities are product decisions, to settle at the start of
-  the phase: patterns (the reader allows 4096, the tester 256), sweeps per target, steps 64.
-  The readers must refuse a file beyond them with a reason, never truncate silently.
+  thread) is structural. **Proposed capacities: exactly what the C++ reader accepts today -
+  4096 patterns and 100,000 sweeps per song, 64 steps per pattern** - so no file that opens
+  now is refused by the C build (old files load into new builds is the property this project
+  protects). The cost is small: a pattern is about 450 bytes, so 4096 are under 2 MB, about
+  4 MB for the double buffer; a writer copies only the used part. 4096 bars of 16 steps at
+  140 BPM is nearly two hours; the largest song in the tests and modules has 32 patterns.
+  For comparison, the TB-303 held 64 patterns and 7 tracks of up to 256 bars; its tracks
+  chained pattern references, where a Screambox song is the track itself (a repeated bar is
+  a copy) and a file is one track. The tester's `SB_MAX_PATTERNS` (256) rises to match.
+  The readers must refuse a file beyond the capacity with a reason, never truncate it.
 - **Concurrency:** `_Atomic` for what is `std::atomic` now - `params_` (as `_Atomic float`
   or the bits in `_Atomic uint32_t`), `liveIdx_`, `readerIdx_`, `transportReset_`,
   `running_`, `displayStep_`, `playMode_`, `patternIdx_` - with the same memory orders, and
@@ -546,11 +554,10 @@ existing C++ program.
   says which C commit last passed it.
 
 ### Decisions to make on the way (not now)
-- The fixed capacities (phase 1).
+- The fixed capacities (phase 1) - proposed above, Dengo to confirm.
 - Wide-character paths (phase 2).
 - Whether phase 3 ships as a numbered release.
-- Whether a plugin (CLAP is a C API) becomes a goal once the engine is C - the study's
-  "what it buys".
+- **Not a goal: a CLAP plugin** (Dengo, 2026-11-09).
 
 ---
 
