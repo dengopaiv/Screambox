@@ -11,4 +11,8 @@ build/
 /modules/
 # The sound check's lines for modules/ name its files; local like the folder.
 /tests/golden/modules.manifest
+# Songs and sweep files are never committed (Dengo, 2026-11-09) - including the
+# test songs in tests/songs/, which stay on the machine that has them.
+*.roq
+*.hape
 /reverse/ghidra_proj/

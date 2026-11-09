@@ -280,10 +280,12 @@ c x 2^(-+cents/1200)); Between or Off to Around turns two values into half their
 default depth if they were equal); switching back without touching the trackbars restores
 the earlier values exactly, so 95 and 100 Hz -> wave (Around, +-46 c) -> Between is 95 and
 100 Hz again. Driven in the app on Ring frequency and Cutoff.
-**Module names are no longer published:** the sound check's 111 module lines (file names,
-tempi, hashes) moved from the tracked manifest to a git-ignored
-`tests/golden/modules.manifest`. Four commits pushed before this still carry them (from
-`bf7ab18`); removing them from GitHub's history would need a rewrite and a force push. The sweep clipboard
+**Song files are not committed** (Dengo): the five `tests/songs/*.roq` left git (they stay
+on this machine, and the sound check still renders them here), `*.roq` and `*.hape` are
+git-ignored, and their lines - with the module lines, which also name local files - live in
+the git-ignored `tests/golden/modules.manifest`. Commit `acc1c16`, already pushed, still
+contains the five test songs; taking them out of GitHub's history would need a rewrite and a
+force push. The sweep clipboard
 now holds a share of the slider's travel instead of a raw position, since sliders no longer
 all have about 100 positions: a Cutoff sweep 10-80 pasted onto Ring frequency still covers
 positions 100-800 of 1000.

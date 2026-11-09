@@ -59,13 +59,17 @@ MANIFEST = os.path.join(ROOT, "tests", "golden", "sound.manifest")
 # tracked one; read together, written apart.
 MODULE_MANIFEST = os.path.join(ROOT, "tests", "golden", "modules.manifest")
 MODULE_PREFIX = "file modules_"
+# tests/songs/ is local too: song files are never committed (Dengo,
+# 2026-11-09), so its lines go to the local manifest with the modules'.
+SONGS_PREFIX = "file tests_songs_"
+LOCAL_PREFIXES = (MODULE_PREFIX, SONGS_PREFIX)
 DEFAULT_EXE = os.path.join(ROOT, "build", "tests", "Release", "screambox_render.exe")
 WORK = os.path.join(ROOT, "build", "sound")
 REFERENCE_EXE = os.path.join(WORK, "reference", "screambox_render.exe")
 MODULES = os.path.join(ROOT, "modules")
-# Songs kept in git for the file path: written by older builds, so that what a
-# newer build makes of them on load (the v15 PWM LFO fold, say) is tested on
-# the bytes those builds really wrote.
+# Songs written by older builds, so that what a newer build makes of them on
+# load (the v15 PWM LFO fold, say) is tested on the bytes those builds really
+# wrote. Local, not in git: song files are never committed.
 SONGS = os.path.join(ROOT, "tests", "songs")
 
 # Fields that must match the manifest. sr, tempo, loop, pats and frames are
@@ -219,8 +223,19 @@ def git_describe():
 def write_manifest(results):
     os.makedirs(os.path.dirname(MANIFEST), exist_ok=True)
     keep = ["sr", "tempo", "loop", "pats", "frames", "hash", "roq", "hape", "resave"]
-    tracked = {k: v for k, v in results.items() if not k.startswith(MODULE_PREFIX)}
-    modules = {k: v for k, v in results.items() if k.startswith(MODULE_PREFIX)}
+    tracked = {k: v for k, v in results.items() if not k.startswith(LOCAL_PREFIXES)}
+    modules = {k: v for k, v in results.items() if k.startswith(LOCAL_PREFIXES)}
+    # Accepted local lines whose folder is not on the machine this run - the
+    # modules moved away, say - are kept, not wiped: this run knows nothing
+    # about them, which is not the same as their sound having gone.
+    if os.path.exists(MODULE_MANIFEST):
+        old = {}
+        _read_one(MODULE_MANIFEST, old, [])
+        for key, f in old.items():
+            absent = (key.startswith(MODULE_PREFIX) and not os.path.isdir(MODULES)) or \
+                     (key.startswith(SONGS_PREFIX) and not os.path.isdir(SONGS))
+            if absent and key not in modules:
+                modules[key] = f
 
     def lines(fh, entries):
         for key in sorted(entries, key=lambda k: (k.startswith("file "), k)):
@@ -233,15 +248,17 @@ def write_manifest(results):
         fh.write("# in the same commit as the change that legitimately moved the sound, and say\n")
         fh.write("# in that commit which lines moved and why.\n")
         fh.write(f"# Accepted {datetime.date.today().isoformat()} from {git_describe()}.\n")
-        fh.write("# The modules/ lines are in modules.manifest beside this file: local, not in git.\n")
+        fh.write("# The modules/ and tests/songs/ lines are in modules.manifest beside this file:\n")
+        fh.write("# local, not in git.\n")
         fh.write("#\n")
         lines(fh, tracked)
     # Only rewritten when this run had the modules: a machine without modules/
     # must not wipe the accepted module lines another run wrote.
     if modules:
         with open(MODULE_MANIFEST, "w", encoding="utf-8", newline="\n") as fh:
-            fh.write("# Screambox module renders - LOCAL ONLY (git-ignored): modules/ is not\n")
-            fh.write("# published, and these lines name its files. Written by check_sound.py --update.\n")
+            fh.write("# Screambox module and test-song renders - LOCAL ONLY (git-ignored): modules/\n")
+            fh.write("# and song files are not published, and these lines name them. Written by\n")
+            fh.write("# check_sound.py --update.\n")
             fh.write(f"# Accepted {datetime.date.today().isoformat()} from {git_describe()}.\n")
             fh.write("#\n")
             lines(fh, modules)
@@ -388,10 +405,12 @@ def main():
         ref_exe = REFERENCE_EXE
 
     have_modules = os.path.isdir(MODULES)
+    have_songs = os.path.isdir(SONGS)
     differing, missing, extra, skipped = [], [], [], 0
     for key, expected in sorted(want.items()):
         if key not in results:
-            if key.startswith(MODULE_PREFIX) and not have_modules:
+            if (key.startswith(MODULE_PREFIX) and not have_modules) or \
+               (key.startswith(SONGS_PREFIX) and not have_songs):
                 skipped += 1
             else:
                 missing.append(key)
@@ -413,7 +432,7 @@ def main():
     for key in extra:
         print(f"      new, not in {label}: {key} (run --update once it is accepted)")
     if skipped:
-        print(f"SKIP  {skipped} module renders: modules/ is not present on this machine")
+        print(f"SKIP  {skipped} local renders: modules/ or tests/songs/ is not on this machine")
 
     sound_moved = [k for k, moved in differing if "hash" in moved]
     if sound_moved:

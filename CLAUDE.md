@@ -284,9 +284,11 @@ module under `modules/` when that folder is present, and compares them with
 - that `.roq` and `.hape` re-save to the same bytes;
 - that `process()` makes zero allocations.
 
-The module lines go to `tests/golden/modules.manifest`, which is git-ignored like
-`modules/` itself: their names are not to be published (Dengo, 2026-11-09). Never move
-them into the tracked manifest, and never commit anything from `modules/`.
+The module and `tests/songs/` lines go to `tests/golden/modules.manifest`, which is
+git-ignored like those folders: neither the songs nor their names are published (Dengo,
+2026-11-09). Never move them into the tracked manifest, and never commit a `.roq`, a
+`.hape` or anything from `modules/`. A run without one of those folders keeps its accepted
+lines rather than wiping them.
 
 On a mismatch it names the first differing sample as a pattern and step. Build its driver
 with `cmake --build build --config Release --target screambox_render`.
@@ -303,7 +305,8 @@ the same manifest unchanged; that is its purpose (TODO Y4). `sb_engine_load_song
 the two in step. `tests/songs/` holds songs written by OLDER builds, rendered from their
 files like the modules: what a newer build makes of them on load (the v15 PWM LFO fold) is
 tested on bytes those builds really wrote. Add one when a load path starts converting
-something.
+something. **Like `modules/`, it stays on this machine: `.roq` and `.hape` files are never
+committed** (git-ignored), and their manifest lines go to the local manifest.
 
 For a new feature, the manifest proves the off path but not the feature itself. The fuller
 method below still applies to the feature:

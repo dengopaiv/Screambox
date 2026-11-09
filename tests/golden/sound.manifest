@@ -2,8 +2,9 @@
 # Every line is a sound that was accepted. Change this file only on purpose,
 # in the same commit as the change that legitimately moved the sound, and say
 # in that commit which lines moved and why.
-# Accepted 2026-11-09 from 03408d5.
-# The modules/ lines are in modules.manifest beside this file: local, not in git.
+# Accepted 2026-11-09 from fe6c7d6.
+# The modules/ and tests/songs/ lines are in modules.manifest beside this file:
+# local, not in git.
 #
 case accent_zero sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=9eb2601ba854b13f roq=3468716fe6afc0a9 hape=- resave=ok
 case comp_heavy sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=13ff9bad821c631b roq=0da2b60e5ea5a606 hape=- resave=ok
@@ -95,8 +96,3 @@ case tempo_60 sr=44100 tempo=60 loop=0 pats=16,16 frames=529200 hash=01885f1e32b
 case tune_down sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=bbeae4d381eb7367 roq=c87ed6795a2c07ec hape=- resave=ok
 case tune_up sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=7af0a76b3df6e723 roq=5ccb651592f4d8f9 hape=- resave=ok
 case volume_half sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=ab42bb11a94c42d3 roq=a57639604897da06 hape=- resave=ok
-file tests_songs_lfo_fast_v9.roq sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=88e9d5acdad2439f roq=- hape=- resave=differs
-file tests_songs_lfo_mid_v9.roq sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=2dc292f0ce4c13e3 roq=- hape=- resave=differs
-file tests_songs_lfo_pwm_sweep_v14.roq sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=235025fdaae47fc7 roq=- hape=- resave=differs
-file tests_songs_lfo_rich_v11.roq sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=489aa565df102037 roq=- hape=- resave=differs
-file tests_songs_lfo_slow_v9.roq sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=86e568a5bddc2b23 roq=- hape=- resave=differs
