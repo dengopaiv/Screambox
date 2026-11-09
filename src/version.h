@@ -10,10 +10,11 @@
 //
 // 1.0.0 was released as Creakbox on 2026-10-03 (tag v1.0.0, still on GitHub).
 // The numbering carries on across the rename; 2.0.0 is the first Screambox.
+// 2.1.0 (test build 2026-11-09): LFOs as sweeps, gliding sweeps, Modulation.
 
 #define SCREAMBOX_VER_MAJOR 2
-#define SCREAMBOX_VER_MINOR 0
+#define SCREAMBOX_VER_MINOR 1
 #define SCREAMBOX_VER_PATCH 0
 
-#define SCREAMBOX_VER_STR   "2.0.0"
-#define SCREAMBOX_VER_WSTR  L"2.0.0"
+#define SCREAMBOX_VER_STR   "2.1.0"
+#define SCREAMBOX_VER_WSTR  L"2.1.0"

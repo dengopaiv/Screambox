@@ -20,8 +20,9 @@ purpose; the About box says so, and so does this file. The file formats keep the
 `CreakboxRoq` / `CreakboxHape` headers, so songs and sweep files saved under the old name
 open unchanged.
 
-**Version 2.0.0, 7 November 2026** - the first release as Screambox, after a tested build
-of 6 November. 1.0.0 was released as Creakbox on 3 October 2026; the numbering carries on
+**Version 2.1.0, test build of 9 November 2026** - LFOs on every slider (as sweeps),
+sweeps that glide, and the Modulation dialog; see `TESTING.txt` in the package. 2.0.0, of
+7 November, was the first release as Screambox, after a tested build of 6 November. 1.0.0 was released as Creakbox on 3 October 2026; the numbering carries on
 across the rename. The number lives in `src/version.h`, which feeds both the exe's file
 properties and the About box.
 
