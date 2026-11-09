@@ -218,7 +218,8 @@ Depth at 0 skips the follower entirely, and the threshold label says so.
 
 #### Ring modulator
 
-Two controls, **frequency** (5 Hz–2 kHz, exponential) and **amount** (dry to pure ring). The
+Two controls, **frequency** (5 Hz–5 kHz, exponential, 1000 fine steps) and **amount** (dry
+to pure ring). The
 carrier is a sine independent of the note, which is what makes it clangorous and inharmonic
 rather than well-behaved — the sound people mean by "ring mod on a 303". Below ~30 Hz it is
 a per-note tremolo; the low hundreds are where a bassline turns metallic; the top is bell

@@ -595,9 +595,9 @@ void MainWindow::buildLayout() {
 static double ringHzFromPos(int pos);
 static int    ringPosFromHz(double hz);
 // Positions on the Ring frequency slider. 1000, not 100 (Dengo, 2026-11-09):
-// at 100 they were about 6 % apart and 95 Hz fell between 94 and 100. At 1000
-// a step is about 0.6 %, under a tenth of a semitone. Every old position is
-// every tenth new one, so a frequency set on the old slider is found exactly.
+// at 100 they were about 6 % apart and 95 Hz fell between 94 and 100. At 1000,
+// over 5 Hz to 5 kHz, a step is about 0.7 %, under an eighth of a semitone.
+// Songs store Hz, so neither the step count nor the range moves a song.
 constexpr int kRingSteps = 1000;
 static void   formatRingHz(double hz, wchar_t* out, size_t n);
 
@@ -784,6 +784,18 @@ INT_PTR CALLBACK MainWindow::sweepEditorProc(HWND dlg, UINT msg, WPARAM wp, LPAR
 // they are set up for is remembered, because on Ring frequency it changes with
 // the LFO choices (valueKind) and the values have to be reset when it does.
 static SweepKind s_trackKind = SweepKind::Percent;
+// The stored values the two value trackbars were last set FROM, and the
+// positions that gave. Reading the dialog back converts positions to stored
+// values, and on a taper (Ring frequency) that is not exact: 100 Hz, the
+// default, sits between two positions and came back as 100.2 Hz, and any
+// frequency an older song stored between positions moved the same way - on
+// Update, with nobody touching it. A trackbar still at the position it was
+// set to keeps the exact stored value instead.
+static struct {
+    bool valid = false;
+    SweepKind kind = SweepKind::Percent;
+    int pos[2]{}, stored[2]{};
+} s_shown;
 // The trackbar range of each kind - what configureSweepValueTrackbars sets.
 static void kindRange(SweepKind kind, int& lo, int& hi) {
     lo = 0; hi = 100;
@@ -965,10 +977,14 @@ static void populateSweepDialog(HWND dlg, int target, const std::vector<int>& pa
     fillStepCombo(dlg, IDC_SWEEP_END_STEP,   patLens[ep], sw.endStep);
     const SweepKind kind = valueKind(target, sw.osc);
     configureSweepValueTrackbars(dlg, kind);
-    SendMessageW(GetDlgItem(dlg, IDC_SWEEP_START_VALUE), TBM_SETPOS, TRUE,
-                 sweepStoredToPos(kind, sw.startValue));
-    SendMessageW(GetDlgItem(dlg, IDC_SWEEP_END_VALUE),   TBM_SETPOS, TRUE,
-                 sweepStoredToPos(kind, sw.endValue));
+    s_shown.valid = true;
+    s_shown.kind  = kind;
+    s_shown.stored[0] = sw.startValue;
+    s_shown.stored[1] = sw.endValue;
+    s_shown.pos[0] = sweepStoredToPos(kind, sw.startValue);
+    s_shown.pos[1] = sweepStoredToPos(kind, sw.endValue);
+    SendMessageW(GetDlgItem(dlg, IDC_SWEEP_START_VALUE), TBM_SETPOS, TRUE, s_shown.pos[0]);
+    SendMessageW(GetDlgItem(dlg, IDC_SWEEP_END_VALUE),   TBM_SETPOS, TRUE, s_shown.pos[1]);
     CheckDlgButton(dlg, IDC_SWEEP_HOLD, sw.hold ? BST_CHECKED : BST_UNCHECKED);
     SendMessageW(GetDlgItem(dlg, IDC_SWEEP_WAVE), CB_SETCURSEL, sw.osc.on() ? sw.osc.shape : 0, 0);
     SendMessageW(GetDlgItem(dlg, IDC_SWEEP_LFO_MODE), CB_SETCURSEL, sw.osc.between ? 1 : 0, 0);
@@ -1238,12 +1254,18 @@ static MainWindow::Sweep readSweepFromDialog(HWND dlg, int target) {
         const UINT deg = GetDlgItemInt(dlg, IDC_SWEEP_PHASE, nullptr, FALSE);
         sw.osc.phase = (float)(deg % 360) / 360.0f;
     }
-    // The values last: what they mean depends on the LFO choices above.
+    // The values last: what they mean depends on the LFO choices above. A
+    // trackbar not moved since it was set keeps its exact stored value.
     const SweepKind kind = valueKind(target, sw.osc);
-    sw.startValue = sweepPosToStored(kind,
-        (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_START_VALUE), TBM_GETPOS, 0, 0));
-    sw.endValue   = sweepPosToStored(kind,
-        (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_END_VALUE),   TBM_GETPOS, 0, 0));
+    const int ids[2] = {IDC_SWEEP_START_VALUE, IDC_SWEEP_END_VALUE};
+    int vals[2];
+    for (int i = 0; i < 2; ++i) {
+        const int pos = (int)SendMessageW(GetDlgItem(dlg, ids[i]), TBM_GETPOS, 0, 0);
+        vals[i] = (s_shown.valid && s_shown.kind == kind && pos == s_shown.pos[i])
+                ? s_shown.stored[i] : sweepPosToStored(kind, pos);
+    }
+    sw.startValue = vals[0];
+    sw.endValue   = vals[1];
     return sw;
 }
 
@@ -1354,6 +1376,7 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                 const SweepKind kind = valueKind(editingSweepParam_, o);
                 if (kind != s_trackKind) {
                     configureSweepValueTrackbars(dlg, kind);
+                    s_shown.valid = false;   // new values, in a new meaning
                     const int pos = (kind == SweepKind::Cents)
                         ? 300   // a minor third each way
                         : sweepStoredToPos(kind, newSweepValue());
@@ -1958,14 +1981,17 @@ INT_PTR CALLBACK MainWindow::distDialogProc(HWND dlg, UINT msg, WPARAM wp, LPARA
     return self->distDialogHandler(dlg, msg, wp, lp);
 }
 
-// Ring carrier taper. 5 Hz to 2 kHz, exponential, because the interesting
+// Ring carrier taper. 5 Hz to 5 kHz, exponential, because the interesting
 // range is enormous and linear would put everything musical in the bottom
 // centimetre of the slider: below ~30 Hz it is a per-note tremolo, the low
-// hundreds are where a bassline turns metallic, and the top is bell territory.
+// hundreds are where a bassline turns metallic, 1-2 kHz is bell territory and
+// above it the clang turns to sizzle. The top was 2 kHz until Dengo asked for
+// more room (2026-11-09); the engine itself goes to just under half the
+// sample rate.
 // Hz is what gets STORED - the engine and the file both hold a real frequency,
 // so this taper can be retuned later without repitching saved songs.
 static const double kRingMinHz = 5.0;
-static const double kRingMaxHz = 2000.0;
+static const double kRingMaxHz = 5000.0;
 
 static double ringHzFromPos(int pos) {
     if (pos < 0) pos = 0;
@@ -2168,9 +2194,9 @@ static const LfoPreset kLfoPresets[] = {
         CBEngine::OscShape::Triangle, true,  2.0f,  0.30},
 };
 
-// A fraction of the target's range as a depth in its stored units. The ring
-// carrier's slider spans 5 Hz to 20 kHz on a taper, which no linear fraction
-// suits; its depth is a fraction of 400 Hz instead.
+// A fraction of the target's range as a depth in its stored units. Ring
+// frequency's depth is in cents (see valueKind), so a fraction of the Cents
+// range.
 static int lfoPresetDepth(int target, double frac) {
     // Presets swing around the slider, so Ring frequency's depth is in cents
     // (valueKind) and gets the Cents span, as Duplet detune does.

@@ -269,8 +269,11 @@ only `osc_starts_late` moved (its Ring LFO, now 300 cents); new cases `osc_betwe
 path), and two RELATIONS - equal ends hold the value, on Cutoff and on Ring frequency.
 Driven in the app. **The Ring frequency slider is finer** (Dengo, same day): 1000 positions
 instead of 100, about 0.6 % apart (under a tenth of a semitone), in the Acid FX dialog and
-the sweep editor alike - 95 Hz is position 491 (94.75 Hz, shown "95 Hz"). Songs store Hz,
-so nothing moved; every old position is exactly every tenth new one. The sweep clipboard
+the sweep editor alike. **And its top is 5 kHz, not 2 kHz** (Dengo, same day); a step is
+then about 0.7 %. Songs store Hz, so nothing moved. Because 100 Hz (the default) no longer
+sits exactly on a position, the sweep editor now keeps a stored value exactly unless its
+trackbar is moved - it used to round every value through the slider position on Update,
+which already nudged any frequency an older song stored between positions. The sweep clipboard
 now holds a share of the slider's travel instead of a raw position, since sliders no longer
 all have about 100 positions: a Cutoff sweep 10-80 pasted onto Ring frequency still covers
 positions 100-800 of 1000.
