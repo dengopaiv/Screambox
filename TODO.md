@@ -470,8 +470,8 @@ existing C++ program.
    C++ first.
    **Then keep that C++ program as the fallback** (Dengo, 2026-11-09): tag the merged commit
    (`cpp-final`). It is a good program with the sweeps work in it, publishable as it stands
-   if the port proves too costly or does not succeed. Until the ear test, branch
-   `sweeps-cpp-backup` holds the same work as `rework` had when this was decided.
+   if the port proves too costly or does not succeed. (A `sweeps-cpp-backup` branch held
+   that work until the port was shelved and it merged into `main`; it was then deleted.)
 2. **Switch the whole build to clang-cl** (`cmake -S . -B build -A x64 -T ClangCL`) with no
    code change, and require `check_sound.py` to pass unchanged. It did, 189 of 189, in the
    study; this proves it again on today's 201 and makes it the build. README's build line
