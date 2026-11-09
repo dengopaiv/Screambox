@@ -256,6 +256,20 @@ acts through a smoother or only at an edge); before that, every render is unchan
 module, every song without sweeps - and `sweep_t07`, Accent squelch, which is read only as
 an accented note starts, so gliding it cannot be heard. New RELATIONS: a constant gliding
 sweep on Cutoff and on Ring frequency equals the slider at that value.
+**LFO "Between" and Ring depth in cents** (Dengo, same day: Ring frequency 95 and 100, then
+an LFO, was expected to swing 95 to 100 Hz; it swung about +-95 Hz around the slider). Each
+LFO now has a Swing choice: *around the slider* (the two values are a depth, as before) or
+*between the start and end values* (it swings between them and sets the value itself).
+Stored as an optional fifth oscillation token, written only on a between-LFO, so every other
+saved byte is unchanged; v15 had never been released, so no version of its own. And an
+around-LFO's depth on Ring frequency is now in CENTS (equal swing in pitch, fine steps) -
+before, it reused the frequency slider's taper, whose smallest step was 5 Hz. **Manifest:**
+only `osc_starts_late` moved (its Ring LFO, now 300 cents); new cases `osc_between_ring`
+(Dengo's example), `_cutoff` (over a straight sweep it ignores), `_pwm` (the per-sample
+path), and two RELATIONS - equal ends hold the value, on Cutoff and on Ring frequency.
+Driven in the app. **Still coarse:** the Ring frequency slider itself (and so a between
+value on it) has 100 positions from 5 Hz to 2 kHz, about 6 % apart - 95 Hz falls between
+94 and 100.
 **Not verified - needs ears:** that gliding Decay, Resonance and the effect sliders sound
 right within a note, and the CPU cost on a slow machine (every moving sweep re-derives
 the knobs and the effect coefficients each sample).

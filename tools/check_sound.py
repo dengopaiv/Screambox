@@ -79,6 +79,8 @@ RELATIONS = [
     # must still be exactly the slider at that value.
     ("cutoff_high", "glide_const_cutoff", "a constant sweep glides to the same value"),
     ("ring_high", "glide_const_ring", "a constant sweep on a geometric target glides to the same value"),
+    ("cutoff_high", "osc_between_const", "a between-LFO with equal ends holds that value"),
+    ("ring_high", "osc_between_ring_const", "a between-LFO with equal ends holds that value, on a frequency"),
 ]
 
 

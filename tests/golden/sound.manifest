@@ -2,7 +2,7 @@
 # Every line is a sound that was accepted. Change this file only on purpose,
 # in the same commit as the change that legitimately moved the sound, and say
 # in that commit which lines moved and why.
-# Accepted 2026-11-09 from d3f2ba8 plus uncommitted changes to src/.
+# Accepted 2026-11-09 from 08dbf1b plus uncommitted changes to src/.
 #
 case accent_zero sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=9eb2601ba854b13f roq=3468716fe6afc0a9 hape=- resave=ok
 case comp_heavy sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=13ff9bad821c631b roq=0da2b60e5ea5a606 hape=- resave=ok
@@ -33,11 +33,16 @@ case loop sr=44100 tempo=140 loop=1 pats=16,16 frames=226800 hash=5edf8a2edfb993
 case mixed_lengths sr=44100 tempo=140 loop=0 pats=16,12t,4,23 frames=354375 hash=98d46a74ab2f41e7 roq=6692db36fd2c66bb hape=- resave=ok
 case mixed_lengths_48k sr=48000 tempo=140 loop=0 pats=16,12t,4,23 frames=385713 hash=e270c9037ee9402b roq=6692db36fd2c66bb hape=- resave=ok
 case noise sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=4deefeb705ec5a2f roq=5d4dbf88f8b3fef8 hape=- resave=ok
+case osc_between_const sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=1a2a727844557663 roq=33b6ef31bf494e3b hape=2a0858a2c9d0d8fb resave=ok
+case osc_between_cutoff sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=5e1385b2b951d4a3 roq=089caee123fbd60a hape=358a465d53a97eca resave=ok
+case osc_between_pwm sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=d188e442ee01d657 roq=7ff8955d20d73a81 hape=cc6da7fab8fc8741 resave=ok
+case osc_between_ring sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=0506d08529bd6307 roq=3f7f5922b7e64f5e hape=8994e5b9073302ff resave=ok
+case osc_between_ring_const sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=ef2ccff2a99162bb roq=174c7e3aee398085 hape=73bb34cc682b9646 resave=ok
 case osc_cutoff_steps sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=7dfc7342d2ba3d17 roq=25bf3de9a6cce1d3 hape=574d55471fec2093 resave=ok
 case osc_loop_hz sr=44100 tempo=140 loop=1 pats=16,16 frames=226800 hash=6d881f7645848f57 roq=ec33bb5f3f0a55fb hape=e2d0e9fce3f8f4bb resave=ok
 case osc_on_ramp sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=2d1ed64d1676184b roq=a58acb16e8da9318 hape=fdb01bd3e1cc8d58 resave=ok
 case osc_pwm_saws_48k sr=48000 tempo=140 loop=0 pats=16,12t,4,23 frames=385713 hash=cf30af6c62197793 roq=23d6624545d1fe33 hape=fe997a65c607d21d resave=ok
-case osc_starts_late sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=e362343cfd44ec63 roq=a70dea6cdb081d35 hape=a4e6393d52c7c32b resave=ok
+case osc_starts_late sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=66ec58484b9203a7 roq=6edeb89b20921a39 hape=69e2227dfcac25df resave=ok
 case osc_tuning_hz sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=a65b0d6b3352627f roq=43e10db93b1d2378 hape=57c1f8ce1f6de7b8 resave=ok
 case osc_zero_cutoff sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=a527d1e987e50bbb roq=7250ccb99e37b8f0 hape=a3dee4171756f7b0 resave=ok
 case osc_zero_pwm sr=44100 tempo=140 loop=0 pats=16,16 frames=226800 hash=a527d1e987e50bbb roq=7811fa8a3a9a13e4 hape=7548e8dbc863f4a4 resave=ok

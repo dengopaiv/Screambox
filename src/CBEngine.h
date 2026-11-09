@@ -194,7 +194,15 @@ public:
     //     lets a ramp and a wobble run at once.
     //   - startVal / endVal are its DEPTH, in the target's stored units, and
     //     the depth travels from one to the other along the sweep exactly as
-    //     a straight sweep's value does - a vibrato that fades in.
+    //     a straight sweep's value does - a vibrato that fades in. On a
+    //     frequency target (Ring frequency) the depth is in CENTS and the swing
+    //     is in equal ratios: centre x 2^(cents x wave / 1200).
+    //   - Unless `between` is set: then startVal / endVal are the two values
+    //     the LFO swings BETWEEN, in the target's ordinary stored units, and it
+    //     sets the value itself - the slider and any straight sweep under it
+    //     are ignored while it runs. Ring frequency 9500 to 10000 swings 95 to
+    //     100 Hz, in equal ratios. (Dengo, 2026-11-09: 95 and 100 then "LFO"
+    //     was expected to mean exactly that.)
     //   - Hold keeps it oscillating at its end depth until the next
     //     oscillating sweep on that target starts. An LFO is an oscillating
     //     sweep that starts at the top of the song and holds.
@@ -216,9 +224,11 @@ public:
         bool  hz    = false;  // rate unit: false = steps per cycle, true = Hz
         float rate  = 0.0f;   // steps per cycle or Hz; <= 0 holds the start phase
         float phase = 0.0f;   // start phase, in cycles (0.25 = a quarter in)
+        bool  between = false; // swing between startVal and endVal, not around
         bool on() const { return shape > 0 && shape < (int)OscShape::Count; }
         bool operator==(const SweepOsc& o) const {
-            return shape == o.shape && hz == o.hz && rate == o.rate && phase == o.phase;
+            return shape == o.shape && hz == o.hz && rate == o.rate && phase == o.phase
+                && between == o.between;
         }
     };
     struct ParamSweep {
@@ -434,6 +444,11 @@ private:
         // depth at (dStepsIn + fraction of this step) / dSpan.
         bool   depthMoving = false;
         float  da = 0.0f, db = 0.0f, dStepsIn = 0.0f, dSpan = 1.0f;
+        // Between mode: the two ends of the swing, in parameter units. `geo`:
+        // a frequency target, which swings in equal ratios (between) or by a
+        // depth in cents (around).
+        bool   between = false, geo = false;
+        double lo = 0.0, hi = 0.0;
     };
     OscRun osc_[kSweepTargets];
     // The straight sweep on each target, as glideSweeps() needs it. Its value

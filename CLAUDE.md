@@ -158,7 +158,10 @@ shows up later as "it sounds different now" with no obvious cause.
      round it to float and the converted LFO would no longer be bit-identical.
    - **Straight and oscillating sweeps are chosen separately** in `evaluateSweeps`: the
      straight one (or the slider) is the centre, the LFO is added to it and clamped to the
-     slider's range. The PWM LFO's expressions survive verbatim in the per-sample path (increment
+     slider's range - unless it is a *between* LFO (`SweepOsc::between`), which swings
+     between its two values and ignores the centre. All of it goes through `oscValueAt()`,
+     except the PWM targets' threshold code. On a geometric target (Ring frequency) an
+     around-LFO's depth is in cents and a between-LFO swings in equal ratios. The PWM LFO's expressions survive verbatim in the per-sample path (increment
      `rate / sampleRate_`, accumulate, wrap at 1, the triangle, the clamp, the threshold) -
      that is what makes an old song's LFO, converted on load, bit-identical in a fresh
      engine. Change them and `tests/songs/lfo_*` tell you.

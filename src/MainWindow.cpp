@@ -655,28 +655,39 @@ static int sweepTargetForCtrl(int ctrlId) {
     return -1;
 }
 
-static int sweepPosToStored(int target, int pos) {
-    switch (kSweepUi[target].kind) {
+// The kind the editor's two value trackbars stand for: the target's own,
+// except that an LFO swinging AROUND the slider has a depth rather than a
+// value, and on Ring frequency that depth is in cents (an equal swing up and
+// down in pitch, with fine steps at any frequency) - not the frequency
+// slider's taper, whose smallest step was 5 Hz.
+static SweepKind valueKind(int target, const CBEngine::SweepOsc& osc) {
+    const SweepKind k = kSweepUi[target].kind;
+    if (k == SweepKind::RingHz && osc.on() && !osc.between) return SweepKind::Cents;
+    return k;
+}
+
+static int sweepPosToStored(SweepKind kind, int pos) {
+    switch (kind) {
         case SweepKind::RingHz: return (int)std::lround(ringHzFromPos(pos) * 100.0);
         default:                return pos;
     }
 }
-static int sweepStoredToPos(int target, int stored) {
-    switch (kSweepUi[target].kind) {
+static int sweepStoredToPos(SweepKind kind, int stored) {
+    switch (kind) {
         case SweepKind::RingHz: return ringPosFromHz(stored / 100.0);
         default:                return stored;
     }
 }
 // A parameter value (engine units) as a stored sweep value, for starting a new
 // sweep at the slider's current setting.
-static int sweepStoredFromParam(int target, float v) {
-    switch (kSweepUi[target].kind) {
+static int sweepStoredFromParam(SweepKind kind, float v) {
+    switch (kind) {
         case SweepKind::Cents:  return (int)std::lround(v * 1200.0f);
         default:                return (int)std::lround(v * 100.0f);
     }
 }
-static void sweepValueLabelFor(int target, int stored, wchar_t* out, size_t n) {
-    switch (kSweepUi[target].kind) {
+static void sweepValueLabelFor(SweepKind kind, int stored, wchar_t* out, size_t n) {
+    switch (kind) {
         case SweepKind::MainUni:
         case SweepKind::MainBi:
             if (stored >= 0) swprintf(out, n, L"+%d%%", stored);
@@ -764,10 +775,14 @@ INT_PTR CALLBACK MainWindow::sweepEditorProc(HWND dlg, UINT msg, WPARAM wp, LPAR
 }
 
 // The value trackbars take the range and step sizes of the target's own
-// slider, so the keys do in the editor what they do on the slider.
-static void configureSweepValueTrackbars(HWND dlg, int target) {
+// slider, so the keys do in the editor what they do on the slider. Which kind
+// they are set up for is remembered, because on Ring frequency it changes with
+// the LFO choices (valueKind) and the values have to be reset when it does.
+static SweepKind s_trackKind = SweepKind::Percent;
+static void configureSweepValueTrackbars(HWND dlg, SweepKind kind) {
+    s_trackKind = kind;
     int lo = 0, hi = 100, line = 1, page = 10;
-    switch (kSweepUi[target].kind) {
+    switch (kind) {
         case SweepKind::MainBi:  lo = -100; break;
         case SweepKind::Squelch: hi = 200;  break;
         case SweepKind::Cents:   lo = -1200; hi = 1200; line = 10; page = 100; break;
@@ -813,11 +828,16 @@ static void refillStepsForPattern(HWND dlg, int patternId, int stepId,
 // fields beside it then do nothing - the accessibility rule's way of saying
 // "inert" without disabling anything.
 static const wchar_t* kWaveNames[] = {
-    L"Off: a straight sweep (frequency and phase unused)",
+    L"Off: a straight sweep (frequency, phase and swing unused)",
     L"Triangle", L"Sine", L"Square", L"Saw up", L"Saw down",
 };
 static_assert(sizeof kWaveNames / sizeof kWaveNames[0] == (size_t)CBEngine::OscShape::Count,
               "one name per OscShape");
+// How an LFO uses its two values (CBEngine::SweepOsc::between).
+static const wchar_t* kSwingNames[] = {
+    L"Around the slider: the two values are how far it swings",
+    L"Between the start value and the end value",
+};
 static const wchar_t* kRateUnitNames[] = {
     L"steps per cycle (follows the tempo)",
     L"Hz (cycles a second, ignores the tempo)",
@@ -838,13 +858,41 @@ static void formatShortFloat(float v, wchar_t* out, size_t n) {
 // Labels that change with the wave: with one, the two values are a depth and
 // Hold keeps the LFO going. Set through setDlgLabelIfChanged so a screen
 // reader hears the change once and only when there is one.
+// What the dialog's wave and swing choices say right now - enough to know
+// what the two value trackbars mean.
+static CBEngine::SweepOsc dialogOsc(HWND dlg) {
+    CBEngine::SweepOsc o;
+    const int wave = (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_WAVE), CB_GETCURSEL, 0, 0);
+    if (wave > 0 && wave < (int)CBEngine::OscShape::Count) {
+        o.shape   = wave;
+        o.between = SendMessageW(GetDlgItem(dlg, IDC_SWEEP_LFO_MODE), CB_GETCURSEL, 0, 0) == 1;
+    }
+    return o;
+}
+
 static void refreshSweepWaveLabels(HWND dlg) {
-    const bool lfo = SendMessageW(GetDlgItem(dlg, IDC_SWEEP_WAVE), CB_GETCURSEL, 0, 0) > 0;
-    setDlgLabelIfChanged(dlg, IDC_SWEEP_START_VALUE_CAP, lfo ? L"Start depth (&v):" : L"Start &value:");
-    setDlgLabelIfChanged(dlg, IDC_SWEEP_END_VALUE_CAP,   lfo ? L"End depth (&l):"   : L"End va&lue:");
+    const CBEngine::SweepOsc o = dialogOsc(dlg);
+    const bool around  = o.on() && !o.between;
+    const bool between = o.on() && o.between;
+    setDlgLabelIfChanged(dlg, IDC_SWEEP_START_VALUE_CAP,
+        around ? L"Start depth (&v):" : between ? L"Swing from (&v):" : L"Start &value:");
+    setDlgLabelIfChanged(dlg, IDC_SWEEP_END_VALUE_CAP,
+        around ? L"End depth (&l):"   : between ? L"Swing to (&l):"   : L"End va&lue:");
     setDlgLabelIfChanged(dlg, IDC_SWEEP_HOLD,
-        lfo ? L"&Hold: keep the LFO going at its end depth until the next LFO"
-            : L"&Hold the end value until the next sweep");
+        around  ? L"&Hold: keep the LFO going at its end depth until the next LFO"
+      : between ? L"&Hold: keep the LFO going until the next LFO"
+                : L"&Hold the end value until the next sweep");
+}
+
+// Both value labels from the trackbars, in whatever the trackbars stand for.
+static void refreshSweepValueLabels(HWND dlg) {
+    const int sp = (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_START_VALUE), TBM_GETPOS, 0, 0);
+    const int ep = (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_END_VALUE),   TBM_GETPOS, 0, 0);
+    wchar_t s[24], e[24];
+    sweepValueLabelFor(s_trackKind, sweepPosToStored(s_trackKind, sp), s, 24);
+    sweepValueLabelFor(s_trackKind, sweepPosToStored(s_trackKind, ep), e, 24);
+    setDlgLabel(dlg, IDC_SWEEP_START_VALUE_LBL, s);
+    setDlgLabel(dlg, IDC_SWEEP_END_VALUE_LBL,   e);
 }
 
 static void populateSweepDialog(HWND dlg, int target, const std::vector<int>& patLens,
@@ -887,12 +935,15 @@ static void populateSweepDialog(HWND dlg, int target, const std::vector<int>& pa
     // After the pattern combos, so each step list is sized to its own pattern.
     fillStepCombo(dlg, IDC_SWEEP_START_STEP, patLens[sp], sw.startStep);
     fillStepCombo(dlg, IDC_SWEEP_END_STEP,   patLens[ep], sw.endStep);
+    const SweepKind kind = valueKind(target, sw.osc);
+    configureSweepValueTrackbars(dlg, kind);
     SendMessageW(GetDlgItem(dlg, IDC_SWEEP_START_VALUE), TBM_SETPOS, TRUE,
-                 sweepStoredToPos(target, sw.startValue));
+                 sweepStoredToPos(kind, sw.startValue));
     SendMessageW(GetDlgItem(dlg, IDC_SWEEP_END_VALUE),   TBM_SETPOS, TRUE,
-                 sweepStoredToPos(target, sw.endValue));
+                 sweepStoredToPos(kind, sw.endValue));
     CheckDlgButton(dlg, IDC_SWEEP_HOLD, sw.hold ? BST_CHECKED : BST_UNCHECKED);
     SendMessageW(GetDlgItem(dlg, IDC_SWEEP_WAVE), CB_SETCURSEL, sw.osc.on() ? sw.osc.shape : 0, 0);
+    SendMessageW(GetDlgItem(dlg, IDC_SWEEP_LFO_MODE), CB_SETCURSEL, sw.osc.between ? 1 : 0, 0);
     SendMessageW(GetDlgItem(dlg, IDC_SWEEP_RATE_UNIT), CB_SETCURSEL, sw.osc.hz ? 1 : 0, 0);
     {
         wchar_t rate[32];
@@ -903,8 +954,8 @@ static void populateSweepDialog(HWND dlg, int target, const std::vector<int>& pa
     }
     refreshSweepWaveLabels(dlg);
     wchar_t sv[24], ev[24];
-    sweepValueLabelFor(target, sw.startValue, sv, 24);
-    sweepValueLabelFor(target, sw.endValue,   ev, 24);
+    sweepValueLabelFor(kind, sw.startValue, sv, 24);
+    sweepValueLabelFor(kind, sw.endValue,   ev, 24);
     setDlgLabel(dlg, IDC_SWEEP_START_VALUE_LBL, sv);
     setDlgLabel(dlg, IDC_SWEEP_END_VALUE_LBL,   ev);
 
@@ -1008,8 +1059,10 @@ static MainWindow::Sweep freshSweep(const std::vector<MainWindow::Sweep>& list,
 static const wchar_t* kWaveExplain[] = {
     L"Straight sweep: the slider goes evenly from Start value to End value across the range, "
     L"then back to its own setting - or stays, with Hold.",
-    L"LFO: moves the slider up and down by itself, around its own setting or a straight sweep "
-    L"on the same steps. Depth is how far it swings. F1 explains more.",
+    L"LFO around the slider: swings up and down by itself around the slider's setting, or a "
+    L"straight sweep on the same steps. Depth is how far each way. F1 explains more.",
+    L"LFO between two values: swings from the first value to the second and back, whatever "
+    L"the slider says. F1 explains more.",
 };
 
 static const wchar_t kSweepHelp[] =
@@ -1021,18 +1074,24 @@ static const wchar_t kSweepHelp[] =
     L"the end value if Hold is ticked. Two straight sweeps on one slider cannot cover the same "
     L"step.\r\n\r\n"
     L"LFO (any other wave)\r\n"
-    L"An LFO swings the slider up and down by itself, over and over. It does not replace the "
-    L"slider: it swings around the slider's own setting, or around a straight sweep on the same "
-    L"steps, so a ramp and a wobble can run at once.\r\n"
+    L"An LFO swings the slider up and down by itself, over and over. Swing chooses how:\r\n"
+    L"- Around the slider: it swings around the slider's own setting, or around a straight "
+    L"sweep on the same steps, so a ramp and a wobble can run at once. The two values are then "
+    L"its depth - how far it swings each way. On Ring frequency the depth is in cents (100 "
+    L"cents is a semitone), so the swing is the same up and down in pitch.\r\n"
+    L"- Between the start value and the end value: it swings from the first value to the second "
+    L"and back, whatever the slider says. Ring frequency between 95 Hz and 100 Hz swings exactly "
+    L"there.\r\n"
     L"- Wave: triangle, sine, square, saw up or saw down - the shape of each swing.\r\n"
-    L"- Start depth and End depth: how far it swings each way. Different values make the swing "
-    L"grow or fade across the range.\r\n"
+    L"- Start depth and End depth (around only): how far it swings each way. Different values "
+    L"make the swing grow or fade across the range.\r\n"
     L"- Frequency, measured in steps per cycle (follows the tempo: 16 is one swing a 16-step bar, "
     L"4 one a beat) or in Hz (swings a second, whatever the tempo).\r\n"
     L"- Starting phase, in degrees: where in its swing it starts. 0 starts in the middle going "
     L"up, 180 in the middle going down.\r\n"
     L"- Hold keeps it swinging after its end, until the next LFO on this slider.\r\n"
-    L"An LFO may cover the same steps as a straight sweep; two LFOs on one slider may not. Both "
+    L"An LFO may cover the same steps as a straight sweep - a Between LFO then decides the value "
+    L"itself; two LFOs on one slider may not. Both "
     L"kinds glide smoothly, sample by sample, rather than stepping from one step to the next. "
     L"The Modulation dialog (Ctrl+M on the main window) adds a "
     L"ready-made LFO to the whole song.\r\n\r\n"
@@ -1120,8 +1179,8 @@ static std::vector<MainWindow::Sweep> shapeSweeps(int target, const std::vector<
         MainWindow::Sweep s;
         patStepOf(lens, a0 + i0, s.startPattern, s.startStep);
         patStepOf(lens, a0 + i1, s.endPattern,   s.endStep);
-        s.startValue = sweepPosToStored(target, (int)std::lround(v[(size_t)i0]));
-        s.endValue   = sweepPosToStored(target, (int)std::lround(v[(size_t)i1]));
+        s.startValue = sweepPosToStored(kSweepUi[target].kind, (int)std::lround(v[(size_t)i0]));
+        s.endValue   = sweepPosToStored(kSweepUi[target].kind, (int)std::lround(v[(size_t)i1]));
         made.push_back(s);
         i0 = i1 + 1;
     }
@@ -1139,21 +1198,24 @@ static MainWindow::Sweep readSweepFromDialog(HWND dlg, int target) {
     sw.startStep    = sel(IDC_SWEEP_START_STEP);
     sw.endPattern   = sel(IDC_SWEEP_END_PATTERN);
     sw.endStep      = sel(IDC_SWEEP_END_STEP);
-    sw.startValue   = sweepPosToStored(target,
-        (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_START_VALUE), TBM_GETPOS, 0, 0));
-    sw.endValue     = sweepPosToStored(target,
-        (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_END_VALUE),   TBM_GETPOS, 0, 0));
     sw.hold         = IsDlgButtonChecked(dlg, IDC_SWEEP_HOLD) == BST_CHECKED;
     const int wave  = sel(IDC_SWEEP_WAVE);
     if (wave > 0 && wave < (int)CBEngine::OscShape::Count) {
-        sw.osc.shape = wave;
-        sw.osc.hz    = sel(IDC_SWEEP_RATE_UNIT) == 1;
+        sw.osc.shape   = wave;
+        sw.osc.between = sel(IDC_SWEEP_LFO_MODE) == 1;
+        sw.osc.hz      = sel(IDC_SWEEP_RATE_UNIT) == 1;
         wchar_t rate[32]{};
         GetDlgItemTextW(dlg, IDC_SWEEP_RATE, rate, 32);
         sw.osc.rate  = std::wcstof(rate, nullptr);   // checked by sweepOscProblem
         const UINT deg = GetDlgItemInt(dlg, IDC_SWEEP_PHASE, nullptr, FALSE);
         sw.osc.phase = (float)(deg % 360) / 360.0f;
     }
+    // The values last: what they mean depends on the LFO choices above.
+    const SweepKind kind = valueKind(target, sw.osc);
+    sw.startValue = sweepPosToStored(kind,
+        (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_START_VALUE), TBM_GETPOS, 0, 0));
+    sw.endValue   = sweepPosToStored(kind,
+        (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_END_VALUE),   TBM_GETPOS, 0, 0));
     return sw;
 }
 
@@ -1178,7 +1240,12 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
             swprintf(hdr, 128, L"Editing sweeps for: %s", kSweepUi[editingSweepParam_].name);
             SetWindowTextW(GetDlgItem(dlg, IDC_SWEEP_PARAM_LABEL), hdr);
 
-            configureSweepValueTrackbars(dlg, editingSweepParam_);
+            {
+                HWND md = GetDlgItem(dlg, IDC_SWEEP_LFO_MODE);
+                for (const wchar_t* m : kSwingNames)
+                    SendMessageW(md, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(m));
+                SendMessageW(md, CB_SETCURSEL, 0, 0);
+            }
             // Enter on a checkbox would otherwise press the dialog's default
             // button - OK - and close the editor. Same subclass as the main
             // window's checkboxes, so Enter toggles it like Space does.
@@ -1224,14 +1291,7 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
         case WM_HSCROLL: {
             // Refresh both value labels on any trackbar scroll — cheap and
             // keeps them in sync with the current slider positions.
-            const int k = editingSweepParam_;
-            int startPos = (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_START_VALUE), TBM_GETPOS, 0, 0);
-            int endPos   = (int)SendMessageW(GetDlgItem(dlg, IDC_SWEEP_END_VALUE),   TBM_GETPOS, 0, 0);
-            wchar_t s[24], e[24];
-            sweepValueLabelFor(k, sweepPosToStored(k, startPos), s, 24);
-            sweepValueLabelFor(k, sweepPosToStored(k, endPos),   e, 24);
-            setDlgLabel(dlg, IDC_SWEEP_START_VALUE_LBL, s);
-            setDlgLabel(dlg, IDC_SWEEP_END_VALUE_LBL,   e);
+            refreshSweepValueLabels(dlg);
             HWND which = reinterpret_cast<HWND>(lp);  // which trackbar moved
             if (which) {
                 NotifyWinEvent(EVENT_OBJECT_VALUECHANGE, which, OBJID_CLIENT, CHILDID_SELF);
@@ -1256,10 +1316,24 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                     lens);
                 return TRUE;
             }
-            if (id == IDC_SWEEP_WAVE && notif == CBN_SELCHANGE) {
+            if ((id == IDC_SWEEP_WAVE || id == IDC_SWEEP_LFO_MODE) && notif == CBN_SELCHANGE) {
                 refreshSweepWaveLabels(dlg);
-                const bool lfo = SendMessageW(GetDlgItem(dlg, IDC_SWEEP_WAVE), CB_GETCURSEL, 0, 0) > 0;
-                setStatus(kWaveExplain[lfo ? 1 : 0]);
+                const CBEngine::SweepOsc o = dialogOsc(dlg);
+                // On Ring frequency the trackbars change meaning with these
+                // choices - a frequency, or a depth in cents. Start the new
+                // meaning somewhere sensible rather than reading 100 Hz as
+                // 100 cents.
+                const SweepKind kind = valueKind(editingSweepParam_, o);
+                if (kind != s_trackKind) {
+                    configureSweepValueTrackbars(dlg, kind);
+                    const int pos = (kind == SweepKind::Cents)
+                        ? 300   // a minor third each way
+                        : sweepStoredToPos(kind, newSweepValue());
+                    for (int t : {IDC_SWEEP_START_VALUE, IDC_SWEEP_END_VALUE})
+                        SendMessageW(GetDlgItem(dlg, t), TBM_SETPOS, TRUE, pos);
+                    refreshSweepValueLabels(dlg);
+                }
+                setStatus(kWaveExplain[!o.on() ? 0 : o.between ? 2 : 1]);
                 return TRUE;
             }
             if (id == IDC_SWEEP_HELP) {
@@ -1415,8 +1489,9 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                 // frequency still travels most of that slider; in stored units
                 // it would be 0.1 Hz to 0.8 Hz, clamped to the bottom.
                 sweepClipboard_ = readSweepFromDialog(dlg, editingSweepParam_);
-                sweepClipboard_.startValue = sweepStoredToPos(editingSweepParam_, sweepClipboard_.startValue);
-                sweepClipboard_.endValue   = sweepStoredToPos(editingSweepParam_, sweepClipboard_.endValue);
+                const SweepKind ck = valueKind(editingSweepParam_, sweepClipboard_.osc);
+                sweepClipboard_.startValue = sweepStoredToPos(ck, sweepClipboard_.startValue);
+                sweepClipboard_.endValue   = sweepStoredToPos(ck, sweepClipboard_.endValue);
                 sweepClipboardValid_ = true;
                 setStatus(L"Sweep copied to clipboard.");
                 return TRUE;
@@ -1424,8 +1499,9 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
             if (id == IDC_SWEEP_PASTE) {
                 if (!sweepClipboardValid_) { setStatus(L"Clipboard empty."); return TRUE; }
                 Sweep pasted = sweepClipboard_;
-                pasted.startValue = sweepPosToStored(editingSweepParam_, pasted.startValue);
-                pasted.endValue   = sweepPosToStored(editingSweepParam_, pasted.endValue);
+                const SweepKind pk = valueKind(editingSweepParam_, pasted.osc);
+                pasted.startValue = sweepPosToStored(pk, pasted.startValue);
+                pasted.endValue   = sweepPosToStored(pk, pasted.endValue);
                 populateSweepDialog(dlg, editingSweepParam_, patternLengths(),
                                     pasted, list, editingSweepIndex_);
                 setStatus(L"Pasted — press Add to commit.");
@@ -1589,7 +1665,7 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
 // frequency target has no sensible zero to start from, and for the rest
 // "where the slider is now" beats "the bottom of the range".
 int MainWindow::newSweepValue() const {
-    return sweepStoredFromParam(editingSweepParam_,
+    return sweepStoredFromParam(kSweepUi[editingSweepParam_].kind,
         engine_.getParam(CBEngine::sweepTargetParam(editingSweepParam_)));
 }
 
@@ -2067,12 +2143,15 @@ static const LfoPreset kLfoPresets[] = {
 // carrier's slider spans 5 Hz to 20 kHz on a taper, which no linear fraction
 // suits; its depth is a fraction of 400 Hz instead.
 static int lfoPresetDepth(int target, double frac) {
+    // Presets swing around the slider, so Ring frequency's depth is in cents
+    // (valueKind) and gets the Cents span, as Duplet detune does.
+    CBEngine::SweepOsc around;
+    around.shape = (int)CBEngine::OscShape::Sine;
     int span = 100;
-    switch (kSweepUi[target].kind) {
+    switch (valueKind(target, around)) {
         case SweepKind::MainBi:  span = 200;   break;
         case SweepKind::Squelch: span = 200;   break;
         case SweepKind::Cents:   span = 2400;  break;
-        case SweepKind::RingHz:  span = 40000; break;   // hundredths of a Hz
         default: break;
     }
     const int d = (int)std::lround(frac * span);
@@ -2179,7 +2258,7 @@ INT_PTR MainWindow::modDialogHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) {
                 pushSweeps(engine_, k);
                 refreshSweptLabels();
                 refreshModList(dlg);
-                wchar_t dv[24]; sweepValueLabelFor(k, sw.startValue, dv, 24);
+                wchar_t dv[24]; sweepValueLabelFor(valueKind(k, sw.osc), sw.startValue, dv, 24);
                 wchar_t m[260];
                 swprintf(m, 260, L"Added to %s: %s, depth %s, the whole song. Edit sweeps to change it.",
                          kSweepUi[k].name, p.name, dv);

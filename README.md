@@ -325,13 +325,20 @@ There is no separate LFO module: **an LFO is a sweep with a wave** (`.roq` v15).
 **LFO wave** (`Alt+W`) in the sweep editor - triangle, sine, square, saw up, saw down - and
 the sweep stops setting the value and starts *moving* it:
 
-- **It moves the value around whatever the slider would otherwise be** - the slider itself,
-  or a straight sweep covering the same step. So a ramp and a wobble run at once: a Cutoff
-  sweep from 10 to 70 with a sine LFO on top wobbles around the rising ramp. One straight
-  sweep and one LFO may cover the same step; they never count as overlapping each other.
-- **The two values become its depth** (the captions say *Start depth* and *End depth*),
-  travelling from one to the other along the sweep as a straight sweep's value does - an
-  LFO that fades in. The result stays inside the slider's range.
+- **Swing** (`Alt+B`) chooses what the two values mean:
+  - **Around the slider** (the default): the LFO moves the value around whatever the
+    slider would otherwise be - the slider itself, or a straight sweep covering the same
+    step. So a ramp and a wobble run at once: a Cutoff sweep from 10 to 70 with a sine LFO
+    on top wobbles around the rising ramp. The two values are its **depth** (the captions
+    say *Start depth* and *End depth*), travelling from one to the other along the sweep -
+    an LFO that fades in. On **Ring frequency the depth is in cents**, so the swing is the
+    same up and down in pitch.
+  - **Between the start value and the end value**: the LFO swings from one to the other and
+    back, and decides the value itself - the slider and any straight sweep under it are
+    ignored while it runs. Ring frequency between 94 Hz and 100 Hz swings exactly there,
+    in equal ratios. (The captions say *Swing from* and *Swing to*.)
+  One straight sweep and one LFO may cover the same step; they never count as overlapping
+  each other. The result always stays inside the slider's range.
 - **Frequency** (`Alt+Q`), **Measured in** (`Alt+M`) **steps per cycle**, which follows the
   tempo, or **Hz**, which does not; and the **Starting phase** in degrees (`Alt+I`). Every
   wave starts at its centre going up (the square at its top), so 0 means the same for all.

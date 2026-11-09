@@ -84,6 +84,10 @@ constexpr const char* kHapeMagic = "CreakboxHape";
 //     page exactly as v13 was, and stamped anyway for v14's reason: an older
 //     build would play an oscillating sweep as a straight one between its two
 //     DEPTHS, without a word. Stamped only when some sweep oscillates.
+//     A FIFTH oscillation token, 1, marks a "between" LFO (it swings between its
+//     two values instead of around the slider); it is written only then, so
+//     every other LFO line keeps its four. Added before v15 was ever released,
+//     which is why it is not a version of its own.
 //     The same version retires the PWM LFO: its three header lines stay
 //     (positional) and are written as 0, and a song that used it loads with
 //     the LFO folded into oscillating sweeps - foldPwmLfo() below.
@@ -154,6 +158,8 @@ void readSweepLine(const std::string& line, RoqSweep& sw) {
         // as NaN samples. Nothing this program writes is either.
         if (!std::isfinite(sw.osc.rate))  sw.osc.rate  = 0.0f;
         if (!std::isfinite(sw.osc.phase)) sw.osc.phase = 0.0f;
+        int mode = 0;
+        if (ss >> mode) sw.osc.between = mode == 1;
         if (!sw.osc.on()) sw.osc = CBEngine::SweepOsc{};   // unknown shape: straight
     }
 }
@@ -165,7 +171,8 @@ void writeSweepLine(std::ostream& out, const RoqSweep& sw, bool withHold, bool w
     if (withHold) out << " " << (sw.hold ? 1 : 0);
     if (withOsc && sw.osc.on())
         out << " " << sw.osc.shape << " " << (sw.osc.hz ? 1 : 0)
-            << " " << floatToken(sw.osc.rate) << " " << floatToken(sw.osc.phase);
+            << " " << floatToken(sw.osc.rate) << " " << floatToken(sw.osc.phase)
+            << (sw.osc.between ? " 1" : "");
     out << "\n";
 }
 

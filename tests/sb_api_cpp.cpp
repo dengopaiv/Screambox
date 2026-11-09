@@ -99,6 +99,7 @@ RoqSweep toRoq(const SbSweep& w) {
     r.osc.hz    = w.osc_hz != 0;
     r.osc.rate  = w.osc_rate;
     r.osc.phase = w.osc_phase;
+    r.osc.between = w.osc_between != 0;
     return r;
 }
 
@@ -112,6 +113,7 @@ SbSweep fromRoq(const RoqSweep& r) {
     w.osc_hz    = r.osc.hz ? 1 : 0;
     w.osc_rate  = r.osc.rate;
     w.osc_phase = r.osc.phase;
+    w.osc_between = r.osc.between ? 1 : 0;
     return w;
 }
 

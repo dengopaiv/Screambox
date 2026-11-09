@@ -395,7 +395,39 @@ static void cOscPwmSaws(SbSong* s, Opt* o) {
 static void cOscStartsLate(SbSong* s, Opt* o) {
     (void)o; basicSong(s); richPatch(s);
     addOsc(s, 18, 0, 6, 30, 1, 9, 30, 0, SB_OSC_TRIANGLE, 1, 0.7f, 0.0f);
-    addOsc(s, 22, 1, 0, 5000, 1, 15, 5000, 0, SB_OSC_SINE, 0, 2.0f, 0.0f);
+    addOsc(s, 22, 1, 0, 300, 1, 15, 300, 0, SB_OSC_SINE, 0, 2.0f, 0.0f);   /* +-300 cents */
+}
+/* Between mode: the LFO swings between its two values and ignores the slider.
+ * Dengo's own example first - Ring frequency between 95 and 100 Hz - then a
+ * main slider, and the per-sample PWM path. */
+static SbSweep* addBetween(SbSong* s, int target, int lo, int hi, int shape, int hz, float rate) {
+    const int lp = s->pattern_count - 1, ls = s->patterns[lp].last_step;
+    SbSweep* w = addOsc(s, target, 0, 0, lo, lp, ls, hi, 1, shape, hz, rate, 0.0f);
+    w->osc_between = 1;
+    return w;
+}
+static void cOscBetweenRing(SbSong* s, Opt* o) {
+    (void)o; basicSong(s); s->params[SB_RING_AMOUNT] = 1.0f;
+    addBetween(s, 22, 9500, 10000, SB_OSC_SINE, 0, 8.0f);
+}
+static void cOscBetweenCutoff(SbSong* s, Opt* o) {
+    (void)o; basicSong(s);
+    addSweep(s, 1, 0, 0, 0, 1, 15, 100, 0);     /* ignored under a between LFO */
+    addBetween(s, 1, 20, 60, SB_OSC_TRIANGLE, 1, 2.0f);
+}
+static void cOscBetweenPwm(SbSong* s, Opt* o) {
+    (void)o; basicSong(s);
+    addBetween(s, 8, 20, 80, SB_OSC_SQUARE, 0, 4.0f);
+}
+/* Equal ends on the frequency target, through its equal-ratio path: ring_high. */
+static void cOscBetweenRingConst(SbSong* s, Opt* o) {
+    (void)o; basicSong(s); s->params[SB_RING_AMOUNT] = 1.0f;
+    addBetween(s, 22, 200000, 200000, SB_OSC_TRIANGLE, 0, 5.0f);
+}
+/* Equal ends: the value never moves - RELATIONS hold it equal to cutoff_high. */
+static void cOscBetweenConst(SbSong* s, Opt* o) {
+    (void)o; basicSong(s);
+    addBetween(s, 1, 100, 100, SB_OSC_SINE, 1, 3.0f);
 }
 /* Depth 0 adds nothing: check_sound.py's RELATIONS hold these equal to stock. */
 static void cOscZeroCutoff(SbSong* s, Opt* o) {
@@ -569,6 +601,9 @@ static const Case kCases[] = {
     {"osc_starts_late", cOscStartsLate, -1}, {"osc_loop_hz", cOscLoopHz, -1},
     {"osc_zero_cutoff", cOscZeroCutoff, -1}, {"osc_zero_pwm", cOscZeroPwm, -1},
     {"glide_const_cutoff", cGlideConstCutoff, -1}, {"glide_const_ring", cGlideConstRing, -1},
+    {"osc_between_ring", cOscBetweenRing, -1}, {"osc_between_cutoff", cOscBetweenCutoff, -1},
+    {"osc_between_pwm", cOscBetweenPwm, -1},   {"osc_between_const", cOscBetweenConst, -1},
+    {"osc_between_ring_const", cOscBetweenRingConst, -1},
     {"dist_classic", cDistClassic, -1}, {"dist_rat", cDistRat, -1},
     {"dist_screamer", cDistScreamer, -1}, {"dist_plus", cDistPlus, -1},
     {"dist_fuzz", cDistFuzz, -1},      {"fuzz_ring_rests", cFuzzRingRests, -1},

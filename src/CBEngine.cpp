@@ -354,7 +354,18 @@ float sweepValueNew(int k, float a, float b, float t) {
 // through float like every other sweep value, which is also what makes a
 // depth of n percent exactly the n / 100.0f the old LFO depth slider stored.
 float oscDepthAt(int k, float a, float b, float t) {
-    return (float)(((double)a + ((double)b - (double)a) * (double)t) / kSweepDests[k].div);
+    // A frequency target's depth is in cents, so the result is in OCTAVES.
+    const double div = kSweepDests[k].geometric ? 1200.0 : (double)kSweepDests[k].div;
+    return (float)(((double)a + ((double)b - (double)a) * (double)t) / div);
+}
+
+// An LFO's two values as the ends of a between-swing, in parameter units: the
+// same decode a straight sweep's endpoint gets, so "between 95 and 100" means
+// exactly what a straight sweep from 95 to 100 would.
+double oscEndValue(int k, int stored) {
+    if (k >= CBEngine::kMainSweepTargets)
+        return (double)sweepValueNew(k, (float)stored, (float)stored, 0.0f);
+    return (double)((float)stored / 100.0f);
 }
 
 // The range an oscillating sweep may move target k through, in parameter
@@ -1000,6 +1011,24 @@ void CBEngine::process(float* out, int frames) {
     // the straight one, or the slider, gives the centre, and the oscillating
     // one moves the value around it. A target with no oscillating sweep runs
     // exactly the code it ran before they existed.
+    // The value an LFO gives target k at wave value w (-1..+1), around
+    // `centre` - or, in between mode, regardless of it. The around-and-linear
+    // case is the expression this code always had.
+    auto oscValueAt = [&](int k, const OscRun& r, double centre, double w) -> double {
+        double v;
+        if (r.between) {
+            const double f = (w + 1.0) * 0.5;
+            v = (r.geo && r.lo > 0.0 && r.hi > 0.0) ? r.lo * std::pow(r.hi / r.lo, f)
+                                                     : r.lo + (r.hi - r.lo) * f;
+        } else if (r.geo) {
+            v = centre * std::exp2(r.depth * w);   // depth in octaves
+        } else {
+            v = centre + r.depth * w;
+        }
+        double lo, hi;
+        oscRange(k, lo, hi);
+        return std::clamp(v, lo, hi);
+    };
     auto evaluateSweeps = [&](long cur) {
         const bool jump = cur != lastSweepPos_ + 1;
         lastSweepPos_ = cur;
@@ -1095,9 +1124,17 @@ void CBEngine::process(float* out, int frames) {
             r.phase0  = (double)o->osc.phase;
             r.depth   = (double)(oCover ? oscDepthAt(k, (float)o->startVal, (float)o->endVal, oT)
                                         : oscDepthAt(k, (float)o->endVal, (float)o->endVal, 1.0f));
+            r.between = o->osc.between;
+            r.geo     = kSweepDests[k].geometric;
+            if (r.between) {
+                r.lo = oscEndValue(k, o->startVal);
+                r.hi = oscEndValue(k, o->endVal);
+            }
             // A depth that travels glides like a straight sweep's value. A
-            // constant one - every converted PWM LFO - is left alone.
-            r.depthMoving = oCover && oEnd > oStart && cur < oEnd && o->startVal != o->endVal;
+            // constant one - every converted PWM LFO - is left alone. Between
+            // mode has no depth: its two values are fixed for the whole LFO.
+            r.depthMoving = !r.between && oCover && oEnd > oStart && cur < oEnd
+                         && o->startVal != o->endVal;
             if (r.depthMoving) {
                 r.da = (float)o->startVal;          r.db    = (float)o->endVal;
                 r.dStepsIn = (float)(cur - oStart); r.dSpan = (float)(oEnd - oStart);
@@ -1123,9 +1160,7 @@ void CBEngine::process(float* out, int frames) {
                                            : frac1(r.phase0));
             const double centre = sweptOn_[id] ? (double)sweptVal_[id]
                                                : (double)params_[id].load(std::memory_order_relaxed);
-            double lo, hi;
-            oscRange(k, lo, hi);
-            sweptVal_[id] = (float)std::clamp(centre + r.depth * oscWave(r.shape, ph), lo, hi);
+            sweptVal_[id] = (float)oscValueAt(k, r, centre, oscWave(r.shape, ph));
             sweptOn_[id]  = true;
         }
         sweepsMoving_ = false;
@@ -1182,10 +1217,7 @@ void CBEngine::process(float* out, int frames) {
             if (sweepTargetPerSample(k)) continue;
             const double centre = L.on ? (double)L.val
                                        : (double)params_[id].load(std::memory_order_relaxed);
-            double lo, hi;
-            oscRange(k, lo, hi);
-            sweptVal_[id] = (float)std::clamp(centre + r.depth * oscWave(r.shape, oscPhaseNow(r)),
-                                              lo, hi);
+            sweptVal_[id] = (float)oscValueAt(k, r, centre, oscWave(r.shape, oscPhaseNow(r)));
             sweptOn_[id]  = true;
         }
     };
@@ -1444,16 +1476,22 @@ void CBEngine::process(float* out, int frames) {
         // would snap the pulse inside out - then the threshold formula.
         double thrMain   = V.pwmThresh;
         double thrDuplet = V.dupletPwmThresh;
+        // Between mode swings from one end to the other instead, and ignores
+        // the centre.
         if (osc_[8].on) {
             const OscRun& r = osc_[8];
-            const double m = std::clamp((double)V.pwm
-                                        + r.depth * oscWave(r.shape, oscPhaseNow(r)), 0.0, 1.0);
+            const double w = oscWave(r.shape, oscPhaseNow(r));
+            const double m = r.between
+                ? std::clamp(r.lo + (r.hi - r.lo) * (w + 1.0) * 0.5, 0.0, 1.0)
+                : std::clamp((double)V.pwm + r.depth * w, 0.0, 1.0);
             thrMain = pi + (m - 0.5) * pi * 1.98;
         }
         if (osc_[11].on && V.dupletLvl > 0.0f) {
             const OscRun& r = osc_[11];
-            const double m = std::clamp((double)V.dupletPwm
-                                        + r.depth * oscWave(r.shape, oscPhaseNow(r)), 0.0, 1.0);
+            const double w = oscWave(r.shape, oscPhaseNow(r));
+            const double m = r.between
+                ? std::clamp(r.lo + (r.hi - r.lo) * (w + 1.0) * 0.5, 0.0, 1.0)
+                : std::clamp((double)V.dupletPwm + r.depth * w, 0.0, 1.0);
             thrDuplet = pi + (m - 0.5) * pi * 1.98;
         }
 

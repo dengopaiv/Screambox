@@ -59,6 +59,7 @@ typedef struct SbSweep {
     int hold;
     int osc_shape, osc_hz;
     float osc_rate, osc_phase;
+    int osc_between;   /* 1: swing between start_val and end_val, not around */
 } SbSweep;
 
 typedef struct SbSong {
