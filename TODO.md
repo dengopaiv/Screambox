@@ -21,9 +21,10 @@ item by item — Dengo and the testers have made enough patterns that every feat
 been played and heard. See "Checked by use" below for what that means for the open
 questions it held.
 
-**2.1.0 test build packaged 2026-11-09** (`dist/Screambox-2.1.0-test.zip`, with a
-TESTING.txt): sweeps on every slider, LFOs, the glide, Modulation, Apply, Ring to 5 kHz.
-Awaiting testers' ears, Darkside's included, before a 2.1.0 release.
+**2.1.0 release packaged 2026-11-09** (`dist/Screambox-v2.1.0-win64.zip`, with
+RELEASE-NOTES.txt): sweeps on every slider, LFOs, the glide, Modulation, Apply, Ring to
+5 kHz - after testers had been through the test build of the same day
+(`Screambox-2.1.0-test.zip`).
 
 **Released as 2.0.0 on 2026-11-07** (1.0.0 was Creakbox, 2026-10-03), after testers
 reported the 2026-11-06 test build working.

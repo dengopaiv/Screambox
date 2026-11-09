@@ -1,0 +1,231 @@
+Screambox release notes
+=======================
+
+Screambox is a bassline synthesizer and step sequencer for Windows, built to
+be used entirely from the keyboard and with a screen reader. Every control is
+a standard Windows control with a label, so it reads the same way in NVDA,
+JAWS and Narrator.
+
+It is built on CreakBox by Frank Reitz (Bass Assessor), 2002, and on its 2004
+VST source, published by bioroid media development. The filter, oscillator,
+envelope and accent are theirs, kept unchanged on purpose. Screambox was
+called Creakbox until November 2026; the name changed so that nobody
+mistakes it for Bass Assessor's original.
+
+
+Getting started
+---------------
+
+Requirements: 64-bit Windows 10 or 11. Nothing to install: unzip anywhere and
+run Screambox.exe.
+
+  F1        lists every key in the program
+  F5        play the song
+  F6        play the current pattern, looped
+  F7        play from the current pattern
+  F8        stop
+  Ctrl+S    save the song (.roq)
+  Ctrl+O    open a song
+  Ctrl+I    import a 2002 CreakBox module (.cb)
+  Ctrl+W    save the song to a WAV file
+  Ctrl+M    Modulation: every slider that can move by itself
+
+Press Enter on any slider - in the main window, the Oscillator dialog or the
+Acid FX dialog - to open its sweep editor, which moves that slider over time,
+or swings it up and down with an LFO.
+
+README.md is the full manual.
+
+
+If something sounds wrong
+-------------------------
+
+Save the song straight away (Ctrl+S) and send the .roq file with a sentence
+about what you heard and how you started playback (F5, F6 or F7). A saved
+song can be rendered exactly as you heard it.
+
+Source and issues: https://github.com/dengopaiv/Screambox
+
+
+==============================================================================
+2.1.0 - 9 November 2026
+==============================================================================
+
+Sweeps on every slider, LFOs, and sweeps that glide. The sound engine is the
+original, unchanged: a song that uses none of this sounds exactly as before.
+
+
+Your songs
+----------
+
+- Every song made by 2.0.0 or earlier opens in 2.1.0, back to the original
+  2002 .cb modules.
+- A song with sweeps sounds slightly different between the starts of steps,
+  because sweeps now glide (see below). At the start of every step it is
+  exactly what it was.
+- A song that used the PWM LFO opens with it turned into an LFO on Main PWM
+  and Duplet PWM. It sounds the same from the start of the song. One
+  difference: the old LFO ran free, so every play caught it at another
+  point; now it starts again with the song, so every play is the same.
+- The other way round is limited. A song saved by 2.1.0 opens in 2.0.0
+  unless it uses something new: an LFO, or a sweep on a slider in the
+  Oscillator or Acid FX dialog or on Accent squelch. 2.0.0 then refuses it
+  with "unsupported version" rather than playing it wrong.
+
+
+What is new
+-----------
+
+1. Sweeps on every slider.
+   Accent squelch and every slider in the Oscillator and Acid FX dialogs can
+   now be swept. Press Enter on any slider, in the main window or in a
+   dialog, to open its sweep editor. In the dialogs Alt+C or Esc closes.
+
+2. Sweeps glide.
+   A sweep used to hold one value for each step, so a ramp was a staircase.
+   Now it moves smoothly, sample by sample, within each step.
+
+3. LFOs.
+   An LFO is a sweep with a wave. In the sweep editor choose an LFO wave
+   (Alt+W): triangle, sine, square, saw up or saw down. Then:
+   - Swing (Alt+B): "Around the slider" swings around the slider's own
+     setting, or around a straight sweep on the same steps, and the two
+     values are how far it swings each way. "Between the start value and
+     the end value" swings between those two values, whatever the slider
+     says. Changing Swing converts the values so the swing stays where it
+     was.
+   - Frequency (Alt+Q), measured in (Alt+M) steps per cycle, which follows
+     the tempo (16 is one swing per 16-step bar), or Hz, which does not.
+   - Starting phase (Alt+I), in degrees: where in its swing it starts.
+   - Hold keeps it going after its end, until the next LFO on that slider.
+   On Ring frequency an "around" depth is in cents (100 cents is a
+   semitone). An LFO's phase follows the song position, so every play and
+   every WAV export of a song are the same.
+
+4. The PWM LFO has moved.
+   The PWM LFO sliders have gone from the Oscillator dialog. To get the same
+   effect: press Enter on Main PWM (or the duplet's PWM) and choose an LFO
+   wave, or use the Modulation dialog's preset "The old PWM LFO".
+
+5. Modulation dialog (Ctrl+M, or the Modulation button).
+   Lists every slider that can move by itself, each with what it carries,
+   for example "Cutoff (2 sweeps, 1 LFO)". Enter opens that slider's sweep
+   editor. "LFO preset" and "Add LFO to the whole song" put a ready-made LFO
+   on the chosen slider. F1 explains.
+
+6. Sweep editor.
+   - Shapes: Shape kind (Alt+K), Cycles (Alt+X) and Generate shape (Alt+G)
+     draw a ramp, an up-and-down or an alternation over the range, made of
+     ordinary sweeps you can edit afterwards.
+   - "(new sweep)" is always the last entry in Sweep number. It starts in
+     the first range no sweep covers yet. (Adding a second sweep used to be
+     impossible.) A refused sweep says which sweep is in the way.
+   - Apply (Alt+Y) lets you hear a change without closing the editor.
+     Cancel still undoes everything since the editor opened.
+   - F5 to F8 play and stop inside the editor and the other dialogs too,
+     and the dialog's status line says what the transport did.
+   - Help (F1) explains sweeps and LFOs.
+   - A value you have not touched is kept exactly; it used to be rounded to
+     the nearest slider position on Add or Update.
+
+7. Ring frequency.
+   The slider now goes up to 5 kHz (was 2 kHz) in 1000 fine steps, so a
+   value like 95 Hz can be set. Songs store Hz, so nothing saved moves.
+
+
+Keys added in this version
+--------------------------
+
+  Ctrl+M        Modulation dialog (main window)
+  Enter         on a dialog slider: its sweep editor
+  F5 to F8      play / stop, also inside the dialogs
+  F1            in the sweep editor and Modulation dialog: help
+  Alt+W, Alt+B, Alt+Q, Alt+M, Alt+I   sweep editor: LFO wave, swing,
+                frequency, measured in, starting phase
+  Alt+K, Alt+G  sweep editor: shape kind, generate shape
+  Alt+X         sweep editor: cycles
+  Alt+Y         sweep editor: Apply
+
+
+==============================================================================
+2.0.0 - 7 November 2026
+==============================================================================
+
+The first release as Screambox. Version 1.0.0 was called Creakbox. Songs
+(.roq) and sweep files (.hape) saved under the old name open unchanged.
+1.0.0 needed the Visual C++ runtime installed; 2.0.0 does not.
+
+1. Sweeps.
+   - A sweep now takes effect from the first sample of its step. Before, it
+     was heard up to one audio buffer late, so notes started with the
+     previous step's value.
+   - A sweep moves the same amount at every step, even across patterns of
+     different lengths.
+   - New "Hold the end value until the next sweep" checkbox (Alt+H).
+   - New Update button (Alt+U) changes the sweep you are looking at, and
+     Cancel now really undoes everything done since the editor opened.
+   - Keys in the editor changed: End pattern is Alt+D, Paste is Alt+S, Save
+     to file is Alt+F. Alt+N and Alt+T were each shared by two controls.
+   - A slider with sweeps says so in its name, for example
+     "Cutoff (2 sweeps)".
+   - Saving a song while a sweep plays saves the slider setting, not the
+     sweep's value at that moment.
+
+2. A slide on the last step of a pattern now glides into the first note of
+   the next pattern (or of the same pattern when looping). It used to click.
+
+3. Adding or deleting a pattern during playback no longer makes playback
+   jump, and sweeps stay on the music they were written for. New random
+   pattern and Import .cb now clear the old song's sweeps.
+
+4. Tempo is exact at every sample rate. At 48 kHz it ran very slightly fast,
+   and triplet bars were a few samples short.
+
+5. Save to WAV includes sweeps and has the right length for any pattern
+   lengths and triplet feel.
+
+6. Acid FX: Fuzz no longer leaves an offset on rests, which with the ring
+   modulator on used to play the carrier tone between notes.
+
+7. Accent squelch goes from 0 to 200 percent; 100 is the original sound, and
+   0 (no accent stacking) can now be reached.
+
+8. Audio device: unplug the headphones during playback and it carries on
+   through the next output, announcing "Audio device changed, now ...". If
+   no output is left it says "Audio device lost" and waits. Changing the
+   default output in Windows moves playback there too.
+
+9. MIDI input has been removed. It never worked: notes were received and
+   never played.
+
+10. D sharp 4 (pitch 52) was about 71 cents flat since 2004. It is now in
+    tune.
+
+
+==============================================================================
+1.0.0 - 3 October 2026 (released as Creakbox)
+==============================================================================
+
+First release of the standalone: an extension of CreakBox (2002) and the
+Creakbox Bassline VST (2004) into an accessible Windows bassline synth and
+step sequencer.
+
+- Patterns of 1 to 64 steps, with a per-pattern triplet feel (Ctrl+T).
+- Per-step accent, slide and reverse step (Ctrl+Shift+A / S / I).
+- PWM LFO, noise, resonance boost.
+- Acid FX block (Ctrl+D): five distortion models, compressor, ring
+  modulator.
+- Copy / Cut / Paste pattern (Ctrl+C / X / V).
+- Loads the original .cb presets; saves .roq, writing the oldest format
+  version that can represent the song.
+
+
+Files in this package
+---------------------
+
+Screambox.exe       the program
+README.md           the manual
+RELEASE-NOTES.txt   this file
+LICENSE.txt         BSD 3-Clause, for Screambox (2026)
+license-bmd.txt     BSD-style licence of the 2004 source the DSP comes from
+creakbox.txt        Bass Assessor's original 2002 CreakBox release note

@@ -20,11 +20,12 @@ purpose; the About box says so, and so does this file. The file formats keep the
 `CreakboxRoq` / `CreakboxHape` headers, so songs and sweep files saved under the old name
 open unchanged.
 
-**Version 2.1.0, test build of 9 November 2026** - LFOs on every slider (as sweeps),
-sweeps that glide, and the Modulation dialog; see `TESTING.txt` in the package. 2.0.0, of
-7 November, was the first release as Screambox, after a tested build of 6 November. 1.0.0 was released as Creakbox on 3 October 2026; the numbering carries on
-across the rename. The number lives in `src/version.h`, which feeds both the exe's file
-properties and the About box.
+**Version 2.1.0, 9 November 2026** - sweeps on every slider, LFOs (as sweeps), sweeps that
+glide, and the Modulation dialog. What changed in each version is in
+[`RELEASE-NOTES.txt`](RELEASE-NOTES.txt), which also ships in the package. 2.0.0, of
+7 November, was the first release as Screambox. 1.0.0 was released as Creakbox on
+3 October 2026; the numbering carries on across the rename. The number lives in
+`src/version.h`, which feeds both the exe's file properties and the About box.
 
 ---
 
@@ -680,8 +681,7 @@ speak of, and a failed write is reported rather than leaving a truncated file.
 `src/resource.rc`:
 
 **File** — `Ctrl+N` new random pattern · `Ctrl+Shift+N` start new track · `Ctrl+O` open
-`.roq` · `Ctrl+S` save `.roq` · `Ctrl+I` import `.cb` · `Ctrl+W` save WAV · `Ctrl+D`
-distortion panel
+`.roq` · `Ctrl+S` save `.roq` · `Ctrl+I` import `.cb` · `Ctrl+W` save WAV
 
 **Edit** — `Ctrl+L` clear pattern · `Ctrl+C` / `Ctrl+X` / `Ctrl+V` copy / cut / paste
 pattern · `Ctrl+E` random (nicely) · `Ctrl+R` random (retro 2002) · `Ctrl+Shift+R` random
@@ -690,12 +690,10 @@ pattern · `Ctrl+E` random (nicely) · `Ctrl+R` random (retro 2002) · `Ctrl+Shi
 **Transpose** — `Ctrl+Up` / `Ctrl+Down` ±1 semitone · `Ctrl+Shift+Up` / `Ctrl+Shift+Down`
 ±1 octave (current pattern; whole-song transpose is menu-only)
 
-**Step flags, from anywhere** — `Alt+A` accent · `Alt+S` slide · `Alt+I` reverse step
-
-**Dialogs** — `Ctrl+D` distortion panel · `Ctrl+M` modulation
+**Dialogs** — `Ctrl+D` (or `Alt+X`) Acid FX · `Alt+O` Oscillator · `Ctrl+M` Modulation
 
 **Pattern** — `Ctrl+Left` previous · `Ctrl+Right` next · `Ctrl+Shift+P` new ·
-`Ctrl+Shift+Del` delete
+`Ctrl+Shift+Del` delete · `Ctrl+T` triplet feel
 
 **Transport** — `F5` play current song from pattern 1 · `F6` loop the current pattern ·
 `F7` play from the current pattern to the end · `F8` stop
@@ -715,6 +713,11 @@ that acts on the step the step list has focused.
 
 **Sliders** — arrows ±1 · PgUp/PgDn ±10 · Home/End to the rails · **Enter opens the sweep
 editor**, in the Oscillator and Acid FX dialogs too (close those with `Alt+C` or `Esc`)
+
+**Sweep editor** — `Alt+Y` Apply · `Alt+W` LFO wave · `Alt+B` swing · `Alt+Q` frequency ·
+`Alt+M` measured in · `Alt+I` starting phase · `Alt+H` hold · `Alt+K` shape kind · `Alt+X`
+cycles · `Alt+G` generate shape · `F1` help. F5–F8 work here, and in the other dialogs, as
+on the main window.
 
 **Checkboxes** — `Space` **or Enter** toggles. Space is the system behaviour (it only
 works now that transport has vacated it); Enter is a subclass, because
@@ -778,7 +781,9 @@ The wildness slider scales rest / slide / accent density for all of them.
 src/            standalone sources (compiled) + 2004 VST sources (reference only)
                   Distortion.* and AcidFx.* are the acid FX block; dist.cpp is the
                   untouched 2004 clipper the Classic model still calls
-tools/          two standalone checks; no build, no dependencies
+tools/          three standalone checks (keyboard, DSP ownership, sound); no dependencies
+tests/          the C render driver and the sound manifest check_sound.py compares against
+RELEASE-NOTES.txt  what changed in each version; ships in the package
 reverse/        reverse-engineering notes on the 2002/2004 originals
 resource/       original 2002 resources
 creakbox.txt    Bass Assessor's original 2002 release note
@@ -791,18 +796,20 @@ presets and `.roq` songs), `CREAKBOX.EXE` (the original 2002 Delphi build), `cb3
 `reverse/ghidra_proj/` and `build/`. References to them elsewhere in this file and in
 `CLAUDE.md` describe the local tree.
 
-Run both checks after touching the things they cover. Each is stdlib-only Python and takes
-under a second:
+Run the checks after touching the things they cover. Each is stdlib-only Python; the first
+two take under a second, and the sound check needs the `screambox_render` target built:
 
 ```
 python tools/check_keyboard.py        after any resource.rc or control-label edit
 python tools/check_dsp_ownership.py   after any CBEngine edit
+python tools/check_sound.py           after any engine or file-format edit
 ```
 
 They exist because everything they catch is **silent** — no error, no warning, no log line.
 The keyboard one covers the seven ways a key can quietly do nothing here; the ownership one
 checks that non-atomic DSP state is written only on the audio thread, which is the property
-ThreadSanitizer would have verified if MSVC shipped it.
+ThreadSanitizer would have verified if MSVC shipped it; the sound one renders every built-in
+case and compares it, sample for sample, with the accepted manifest (see `CLAUDE.md`).
 
 `reverse/` is worth reading before changing anything engine-adjacent:
 

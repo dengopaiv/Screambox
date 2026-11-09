@@ -24,7 +24,9 @@ reconfigure. Leave the rest of `build/` alone — it holds `Release/`.
 
 The release package lives in `dist/` (ignored by git): the exe, `README.md`,
 `RELEASE-NOTES.txt` (`TESTING.txt` in a test build), `LICENSE.txt`, `license-bmd.txt` and
-`creakbox.txt`. The `modules/` presets are not shipped.
+`creakbox.txt`. The `modules/` presets are not shipped. `RELEASE-NOTES.txt` is the
+changelog and is tracked in the repo root, newest version first; a release adds its
+section there and copies the file into the package (2.0.0's notes were once only on GitHub).
 
 The program version is `src/version.h` and nowhere else - `resource.rc` and the About box
 both read it. It is unrelated to the `.roq` / `.hape` format versions; a release never bumps
@@ -80,8 +82,8 @@ custom accessible object. The only accessibility API used is `NotifyWinEvent`.
   a mnemonic to a later letter of the same word (`Te&mpo`, `Deca&y`, `T&uning`,
   `Wil&dness` all exist for this reason) over inventing a label. Reserved by the menu
   bar: F, E, P, H. An accelerator on the same chord pre-empts the mnemonic entirely,
-  which is why `Alt+A` / `Alt+S` / `Alt+R` fire their accelerators and the identically
-  lettered labels never see the key.
+  which is why `Alt+A` / `Alt+S` / `Alt+R` were dead on the Accent slider, the Resonance
+  slider and the Run button for as long as they were also bound as accelerators.
 - **Never bind a plain, unmodified key as a global accelerator.** `TranslateAccelerator`
   runs before `IsDialogMessage`, so the accelerator wins everywhere and the key goes dead
   on every control in the window. `VK_SPACE` was bound to run/stop for a while and no
