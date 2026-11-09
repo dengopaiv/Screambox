@@ -475,9 +475,11 @@ existing C++ program.
   the `SongWriter` protocol unchanged. `writerMu_` becomes `mtx_t` or an `SRWLOCK`.
 - **`dist.cpp` keeps its state in globals** and `resetFilters()` calls `dist_initdist()`;
   the WAV export's engine and the playing engine share it today. In C it becomes per-engine
-  state. Check first whether `dist_dist()` has state that reaches the output; if it does,
-  this changes the export-while-playing case only, which the tester (one engine at a time)
-  cannot see - say so in the commit.
+  state. It does reach the output: `dist_dist()`, the stock clipper every song uses, runs
+  through a high-pass whose memory (`d_hibi`) is that global, so a WAV export made while
+  the song plays disturbs both. Per-engine state fixes that and changes only that case,
+  which the tester (one engine at a time) cannot see - say so in the commit. Worth fixing
+  in C++ first, in its own commit, if the port is far off.
 - **The maths audit, call by call** - the one place a port silently changes bits. Every
   `std::pow`, `std::sin`, `std::exp`, `std::log`, `std::log2`, `std::floor`, `std::lround`,
   `std::clamp`, `std::max/min` gets its exact C equivalent for the argument types it had:
