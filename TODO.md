@@ -273,7 +273,17 @@ the sweep editor alike. **And its top is 5 kHz, not 2 kHz** (Dengo, same day); a
 then about 0.7 %. Songs store Hz, so nothing moved. Because 100 Hz (the default) no longer
 sits exactly on a position, the sweep editor now keeps a stored value exactly unless its
 trackbar is moved - it used to round every value through the slider position on Update,
-which already nudged any frequency an older song stored between positions. The sweep clipboard
+which already nudged any frequency an older song stored between positions.
+**Changing Swing converts the values** (Dengo: switching it reset them). Around to Between
+turns a depth d around the slider's setting c into c-d .. c+d (on Ring frequency
+c x 2^(-+cents/1200)); Between or Off to Around turns two values into half their distance (a
+default depth if they were equal); switching back without touching the trackbars restores
+the earlier values exactly, so 95 and 100 Hz -> wave (Around, +-46 c) -> Between is 95 and
+100 Hz again. Driven in the app on Ring frequency and Cutoff.
+**Module names are no longer published:** the sound check's 111 module lines (file names,
+tempi, hashes) moved from the tracked manifest to a git-ignored
+`tests/golden/modules.manifest`. Four commits pushed before this still carry them (from
+`bf7ab18`); removing them from GitHub's history would need a rewrite and a force push. The sweep clipboard
 now holds a share of the slider's travel instead of a raw position, since sliders no longer
 all have about 100 positions: a Cutoff sweep 10-80 pasted onto Ring frequency still covers
 positions 100-800 of 1000.

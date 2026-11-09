@@ -284,6 +284,10 @@ module under `modules/` when that folder is present, and compares them with
 - that `.roq` and `.hape` re-save to the same bytes;
 - that `process()` makes zero allocations.
 
+The module lines go to `tests/golden/modules.manifest`, which is git-ignored like
+`modules/` itself: their names are not to be published (Dengo, 2026-11-09). Never move
+them into the tracked manifest, and never commit anything from `modules/`.
+
 On a mismatch it names the first differing sample as a pattern and step. Build its driver
 with `cmake --build build --config Release --target screambox_render`.
 - **A change that should not move the sound must leave it all PASS.**

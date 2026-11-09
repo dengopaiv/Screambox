@@ -796,6 +796,20 @@ static struct {
     SweepKind kind = SweepKind::Percent;
     int pos[2]{}, stored[2]{};
 } s_shown;
+// The LFO choices the two values were last set for, so a change of Swing can
+// tell what they meant before it.
+static CBEngine::SweepOsc s_shownOsc;
+// The values as they were before the last conversion, so that switching the
+// meaning back without touching the trackbars restores them exactly. Without
+// it, 95 and 100 Hz set with the wave Off, then a wave (Around: converted to a
+// depth around the slider), then Between, came back centred on the slider -
+// 97.5 to 102.6 Hz - instead of 95 to 100.
+static struct {
+    bool valid = false;
+    bool depth = false;          // they meant a depth (Around)
+    SweepKind kind = SweepKind::Percent;
+    int stored[2]{};
+} s_beforeConvert;
 // The trackbar range of each kind - what configureSweepValueTrackbars sets.
 static void kindRange(SweepKind kind, int& lo, int& hi) {
     lo = 0; hi = 100;
@@ -983,6 +997,8 @@ static void populateSweepDialog(HWND dlg, int target, const std::vector<int>& pa
     s_shown.stored[1] = sw.endValue;
     s_shown.pos[0] = sweepStoredToPos(kind, sw.startValue);
     s_shown.pos[1] = sweepStoredToPos(kind, sw.endValue);
+    s_shownOsc = sw.osc;
+    s_beforeConvert.valid = false;   // a different sweep: nothing to go back to
     SendMessageW(GetDlgItem(dlg, IDC_SWEEP_START_VALUE), TBM_SETPOS, TRUE, s_shown.pos[0]);
     SendMessageW(GetDlgItem(dlg, IDC_SWEEP_END_VALUE),   TBM_SETPOS, TRUE, s_shown.pos[1]);
     CheckDlgButton(dlg, IDC_SWEEP_HOLD, sw.hold ? BST_CHECKED : BST_UNCHECKED);
@@ -1369,22 +1385,88 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
             if ((id == IDC_SWEEP_WAVE || id == IDC_SWEEP_LFO_MODE) && notif == CBN_SELCHANGE) {
                 refreshSweepWaveLabels(dlg);
                 const CBEngine::SweepOsc o = dialogOsc(dlg);
-                // On Ring frequency the trackbars change meaning with these
-                // choices - a frequency, or a depth in cents. Start the new
-                // meaning somewhere sensible rather than reading 100 Hz as
-                // 100 cents.
-                const SweepKind kind = valueKind(editingSweepParam_, o);
-                if (kind != s_trackKind) {
-                    configureSweepValueTrackbars(dlg, kind);
-                    s_shown.valid = false;   // new values, in a new meaning
-                    const int pos = (kind == SweepKind::Cents)
-                        ? 300   // a minor third each way
-                        : sweepStoredToPos(kind, newSweepValue());
-                    for (int t : {IDC_SWEEP_START_VALUE, IDC_SWEEP_END_VALUE})
-                        SendMessageW(GetDlgItem(dlg, t), TBM_SETPOS, TRUE, pos);
+                // The two values mean a depth around the slider in one mode
+                // and two values in the others. When that meaning changes they
+                // are CONVERTED so the swing stays where it was - they used to
+                // be reset (Ring frequency) or kept as raw numbers (everything
+                // else, where a depth of 25 became "between 25 and 25": no
+                // swing at all). Dengo, 2026-11-09.
+                const int target = editingSweepParam_;
+                const SweepKind oldKind = s_trackKind;
+                const SweepKind newKind = valueKind(target, o);
+                const int tb[2] = {IDC_SWEEP_START_VALUE, IDC_SWEEP_END_VALUE};
+                int v[2];
+                for (int i = 0; i < 2; ++i) {
+                    const int pos = (int)SendMessageW(GetDlgItem(dlg, tb[i]), TBM_GETPOS, 0, 0);
+                    v[i] = (s_shown.valid && s_shown.kind == oldKind && pos == s_shown.pos[i])
+                         ? s_shown.stored[i] : sweepPosToStored(oldKind, pos);
+                }
+                const bool wasAround = s_shownOsc.on() && !s_shownOsc.between;
+                const bool nowAround = o.on() && !o.between;
+                bool converted = false;
+                // Unmoved since the last conversion, and switching back to what
+                // the values meant before it: give those values back exactly.
+                bool untouched = s_shown.valid && s_shown.kind == oldKind;
+                for (int i = 0; i < 2 && untouched; ++i)
+                    untouched = (int)SendMessageW(GetDlgItem(dlg, tb[i]), TBM_GETPOS, 0, 0)
+                             == s_shown.pos[i];
+                if (wasAround != nowAround && untouched && s_beforeConvert.valid
+                    && s_beforeConvert.depth == nowAround && s_beforeConvert.kind == newKind) {
+                    const int back[2] = {s_beforeConvert.stored[0], s_beforeConvert.stored[1]};
+                    s_beforeConvert = {true, wasAround, oldKind, {v[0], v[1]}};
+                    v[0] = back[0];
+                    v[1] = back[1];
+                    converted = true;
+                } else if (wasAround != nowAround) {
+                    s_beforeConvert = {true, wasAround, oldKind, {v[0], v[1]}};
+                    const bool   geo = kSweepUi[target].kind == SweepKind::RingHz;
+                    const double c   = (double)newSweepValue();   // the slider, stored units
+                    if (wasAround) {
+                        // A depth either way of the slider -> the two ends.
+                        const double d = std::max(std::abs((double)v[0]), std::abs((double)v[1]));
+                        const double lo = geo ? c * std::exp2(-d / 1200.0) : c - d;
+                        const double hi = geo ? c * std::exp2( d / 1200.0) : c + d;
+                        v[0] = (int)std::lround(lo);
+                        v[1] = (int)std::lround(hi);
+                    } else {
+                        // Two values -> how far either way they reach.
+                        double d = 0.0;
+                        if (geo && v[0] > 0 && v[1] > 0)
+                            d = 1200.0 * std::fabs(std::log2((double)v[1] / (double)v[0])) * 0.5;
+                        else if (!geo)
+                            d = std::fabs((double)v[1] - (double)v[0]) * 0.5;
+                        if (d < 1.0) {
+                            // No swing to keep: a modest one to start from.
+                            // Nothing worth going back to either - restoring
+                            // two equal values would take the swing away.
+                            int plo, phi;
+                            kindRange(newKind, plo, phi);
+                            d = geo ? 300.0 : (double)(phi - plo) * 0.1;
+                            s_beforeConvert.valid = false;
+                        }
+                        v[0] = v[1] = (int)std::lround(d);
+                    }
+                    converted = true;
+                }
+                if (converted || newKind != oldKind) {
+                    configureSweepValueTrackbars(dlg, newKind);
+                    int plo, phi;
+                    kindRange(newKind, plo, phi);
+                    const int s0 = sweepPosToStored(newKind, plo), s1 = sweepPosToStored(newKind, phi);
+                    s_shown.valid = true;
+                    s_shown.kind  = newKind;
+                    for (int i = 0; i < 2; ++i) {
+                        v[i] = std::clamp(v[i], std::min(s0, s1), std::max(s0, s1));
+                        s_shown.stored[i] = v[i];
+                        s_shown.pos[i]    = sweepStoredToPos(newKind, v[i]);
+                        SendMessageW(GetDlgItem(dlg, tb[i]), TBM_SETPOS, TRUE, s_shown.pos[i]);
+                    }
                     refreshSweepValueLabels(dlg);
                 }
-                setStatus(kWaveExplain[!o.on() ? 0 : o.between ? 2 : 1]);
+                s_shownOsc = o;
+                std::wstring m = kWaveExplain[!o.on() ? 0 : o.between ? 2 : 1];
+                if (converted) m += L" The values were converted to keep the same swing.";
+                setStatus(m.c_str());
                 return TRUE;
             }
             if (id == IDC_SWEEP_HELP) {

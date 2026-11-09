@@ -338,6 +338,9 @@ the sweep stops setting the value and starts *moving* it:
     back, and decides the value itself - the slider and any straight sweep under it are
     ignored while it runs. Ring frequency between 94 Hz and 100 Hz swings exactly there,
     in equal ratios. (The captions say *Swing from* and *Swing to*.)
+  Changing Swing converts the two values so the swing stays where it was - a depth of 10
+  around a slider at 15 becomes "between 5 and 25" - and switching back without touching
+  them gives the old values back exactly.
   One straight sweep and one LFO may cover the same step; they never count as overlapping
   each other. The result always stays inside the slider's range.
 - **Frequency** (`Alt+Q`), **Measured in** (`Alt+M`) **steps per cycle**, which follows the

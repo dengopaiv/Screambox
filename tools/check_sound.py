@@ -26,9 +26,10 @@ What it checks, for every case:
   * Relations that must hold whatever the manifest says (see RELATIONS).
 
 The songs in tests/songs/ are rendered from their files, and so is the local
-modules/ folder (not in git) when it is present; each one's line is in the
-manifest, and a missing modules/ folder is reported as skipped rather than
-failed.
+modules/ folder (not in git) when it is present. The modules' lines live in
+tests/golden/modules.manifest, which is git-ignored like the folder - their
+names are not to be published; a missing modules/ folder is reported as
+skipped rather than failed.
 
 When a hash differs and a reference driver exists (--update copies the
 driver to build/sound/reference/), both are re-run on the failing cases and
@@ -52,6 +53,12 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 MANIFEST = os.path.join(ROOT, "tests", "golden", "sound.manifest")
+# The lines for modules/ - the local presets and testers' songs, which are not
+# in git and must not be published (Dengo, 2026-11-09). Their lines name the
+# files, so they live in a git-ignored manifest of their own beside the
+# tracked one; read together, written apart.
+MODULE_MANIFEST = os.path.join(ROOT, "tests", "golden", "modules.manifest")
+MODULE_PREFIX = "file modules_"
 DEFAULT_EXE = os.path.join(ROOT, "build", "tests", "Release", "screambox_render.exe")
 WORK = os.path.join(ROOT, "build", "sound")
 REFERENCE_EXE = os.path.join(WORK, "reference", "screambox_render.exe")
@@ -173,11 +180,8 @@ def relation_failures(results):
     return bad
 
 
-def read_manifest():
-    entries, header = {}, []
-    if not os.path.exists(MANIFEST):
-        return None, []
-    with open(MANIFEST, encoding="utf-8") as fh:
+def _read_one(path, entries, header):
+    with open(path, encoding="utf-8") as fh:
         for line in fh:
             line = line.rstrip("\n")
             if not line or line.startswith("#"):
@@ -185,6 +189,17 @@ def read_manifest():
                 continue
             parts = line.split()
             entries[parts[0] + " " + parts[1]] = dict(kv.split("=", 1) for kv in parts[2:])
+
+
+def read_manifest():
+    """The tracked manifest and, when this machine has one, the local module
+    manifest, as one dict."""
+    entries, header = {}, []
+    if not os.path.exists(MANIFEST):
+        return None, []
+    _read_one(MANIFEST, entries, header)
+    if os.path.exists(MODULE_MANIFEST):
+        _read_one(MODULE_MANIFEST, entries, [])
     return entries, header
 
 
@@ -204,16 +219,32 @@ def git_describe():
 def write_manifest(results):
     os.makedirs(os.path.dirname(MANIFEST), exist_ok=True)
     keep = ["sr", "tempo", "loop", "pats", "frames", "hash", "roq", "hape", "resave"]
+    tracked = {k: v for k, v in results.items() if not k.startswith(MODULE_PREFIX)}
+    modules = {k: v for k, v in results.items() if k.startswith(MODULE_PREFIX)}
+
+    def lines(fh, entries):
+        for key in sorted(entries, key=lambda k: (k.startswith("file "), k)):
+            f = entries[key]
+            fh.write(key + " " + " ".join(f"{k}={f[k]}" for k in keep if k in f) + "\n")
+
     with open(MANIFEST, "w", encoding="utf-8", newline="\n") as fh:
         fh.write("# Screambox sample-exact manifest - written by tools/check_sound.py --update.\n")
         fh.write("# Every line is a sound that was accepted. Change this file only on purpose,\n")
         fh.write("# in the same commit as the change that legitimately moved the sound, and say\n")
         fh.write("# in that commit which lines moved and why.\n")
         fh.write(f"# Accepted {datetime.date.today().isoformat()} from {git_describe()}.\n")
+        fh.write("# The modules/ lines are in modules.manifest beside this file: local, not in git.\n")
         fh.write("#\n")
-        for key in sorted(results, key=lambda k: (k.startswith("file "), k)):
-            f = results[key]
-            fh.write(key + " " + " ".join(f"{k}={f[k]}" for k in keep if k in f) + "\n")
+        lines(fh, tracked)
+    # Only rewritten when this run had the modules: a machine without modules/
+    # must not wipe the accepted module lines another run wrote.
+    if modules:
+        with open(MODULE_MANIFEST, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("# Screambox module renders - LOCAL ONLY (git-ignored): modules/ is not\n")
+            fh.write("# published, and these lines name its files. Written by check_sound.py --update.\n")
+            fh.write(f"# Accepted {datetime.date.today().isoformat()} from {git_describe()}.\n")
+            fh.write("#\n")
+            lines(fh, modules)
 
 
 # ------------------------------------------------------------- diagnosis
@@ -360,7 +391,7 @@ def main():
     differing, missing, extra, skipped = [], [], [], 0
     for key, expected in sorted(want.items()):
         if key not in results:
-            if key.startswith("file modules/") and not have_modules:
+            if key.startswith(MODULE_PREFIX) and not have_modules:
                 skipped += 1
             else:
                 missing.append(key)

@@ -9,4 +9,6 @@ build/
 /CREAKBOX.EXE
 /cb303.wav
 /modules/
+# The sound check's lines for modules/ name its files; local like the folder.
+/tests/golden/modules.manifest
 /reverse/ghidra_proj/
