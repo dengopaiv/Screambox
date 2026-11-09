@@ -285,13 +285,16 @@ How they behave, precisely:
 
 **The editor.** Pick a sweep by number, change it and press **Update**; **Add** makes a
 new one. A sweep whose end is before its start is refused with a reason (it could never
-play), as is one that overlaps another on the same slider. **Cancel** really cancels:
-every change made since the dialog opened is undone. A new sweep starts at the slider's
+play), as is one that overlaps another on the same slider. **Apply** (`Alt+Y`) lets you
+hear a change without closing: the sweep shown takes what the fields say, as Update does,
+and the slider's sweeps go to the engine at once - start the song playing first, since the
+transport keys do not reach the main window while the editor is open. **Cancel** really
+cancels: every change made since the dialog opened is undone, applied or not. A new sweep starts at the slider's
 current setting at both ends. The value sliders move like the slider they stand for -
 cents for Duplet detune, the dialogs' exponential tapers for the two frequencies, 0-200 %
 for Accent squelch.
 
-**Shapes.** Below the buttons, **Shape kind** (`Alt+K`), **Cycles** (`Alt+Y`) and
+**Shapes.** Below the buttons, **Shape kind** (`Alt+K`), **Cycles** (`Alt+X`) and
 **Generate shape** (`Alt+G`) fill the range set above - start to end, start value to end
 value - with a shape repeated that many times:
 

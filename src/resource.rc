@@ -198,12 +198,17 @@ BEGIN
     // reaches the engine or the file - the result is plain sweeps.
     LTEXT           "Shape &kind:",      IDC_STATIC,       8,   274, 46, 14
     COMBOBOX        IDC_SWEEP_SHAPE,     56,  272, 110, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
-    LTEXT           "C&ycles:",          IDC_STATIC,       174, 274, 30, 14
+    // Cycles gave up Y to Appl&y, which is pressed far more often; no other
+    // letter of "Cycles" is free, and X reads as "times".
+    LTEXT           "Cycles (&x):",      IDC_STATIC,       170, 274, 34, 14
     COMBOBOX        IDC_SWEEP_CYCLES,    206, 272, 40, 160, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
     PUSHBUTTON      "&Generate shape",   IDC_SWEEP_GENERATE, 254, 271, 90, 18, WS_TABSTOP
     LTEXT           "",                  IDC_SWEEP_STATUS, 8, 296, 344, 28
-    DEFPUSHBUTTON   "OK",                IDOK,             240, 330, 50, 16, WS_TABSTOP
-    PUSHBUTTON      "Cancel",            IDCANCEL,         294, 330, 50, 16, WS_TABSTOP
+    // Apply sends the sweeps to the engine without closing, to hear a change
+    // while the song plays; Cancel still undoes everything since opening.
+    DEFPUSHBUTTON   "OK",                IDOK,             186, 330, 50, 16, WS_TABSTOP
+    PUSHBUTTON      "Cancel",            IDCANCEL,         240, 330, 50, 16, WS_TABSTOP
+    PUSHBUTTON      "Appl&y",            IDC_SWEEP_APPLY,  294, 330, 50, 16, WS_TABSTOP
 END
 
 // Modulation (TODO Y3): every sweep target in one list, each read with its

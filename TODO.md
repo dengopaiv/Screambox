@@ -214,6 +214,15 @@ under a wobble is still one straight sweep plus one LFO; and the depth can fade 
 sweeps and LFOs are chosen separately per step and never overlap each other. **Confirmed by
 Dengo 2026-11-09: keep the riding model.** Next: Dengo tests by ear before `rework` merges.
 
+**Apply** (Dengo, 2026-11-09): the sweep editor's Apply (`Alt+Y`) updates the sweep shown
+from the fields and sends the slider's list to the engine without closing, to hear a change
+while the song plays; Cancel still undoes it. With no sweep in the list it only sends the
+list, so Remove-then-Apply goes quiet instead of re-adding the fields. Cycles moved from
+Alt+Y to Alt+X for it. Driven in the app: Apply reaches the engine (the main window's label
+changes with the editor open), Add alone does not, Cancel takes it back out.
+**Not done:** F5-F8 do not reach the main window while the editor is open (it is modal), so
+playback has to be started before opening it.
+
 **What changed where:**
 - Engine: `SweepOsc` on `ParamSweep`; `evaluateSweeps` chooses the straight and the
   oscillating sweep separately; `osc_` per target, Hz phases accumulated per sample and

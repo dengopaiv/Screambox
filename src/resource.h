@@ -172,6 +172,7 @@
 #define IDC_SWEEP_PHASE             730
 #define IDC_SWEEP_RATE              731
 #define IDC_SWEEP_RATE_UNIT         732
+#define IDC_SWEEP_APPLY             733
 
 // Modulation dialog (TODO Y3)
 #define IDD_MODULATION              1000

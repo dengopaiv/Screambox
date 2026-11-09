@@ -1069,6 +1069,55 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                 }
                 return TRUE;
             }
+            if (id == IDC_SWEEP_APPLY) {
+                // Hear it without closing: the sweep shown takes the fields,
+                // as Update does, and this target's whole list goes to the
+                // engine - which otherwise hears nothing until the editor
+                // closes. Cancel still undoes everything since the editor
+                // opened: openSweepEditor() pushes the restored snapshot.
+                // With no sweep in the list there is nothing to update - after
+                // Remove of the last one, Apply must not bring the fields back
+                // as a sweep - so the list is sent as it is.
+                const bool any = !list.empty() && editingSweepIndex_ >= 0
+                              && editingSweepIndex_ < (int)list.size();
+                if (any) {
+                    Sweep sw = readSweepFromDialog(dlg, editingSweepParam_);
+                    if (sweepIsBackwards(sw)) {
+                        setStatus(L"The end is before the start, so this sweep would never play. Adjust the ranges.");
+                        return TRUE;
+                    }
+                    if (const wchar_t* why = sweepOscProblem(sw)) { setStatus(why); return TRUE; }
+                    for (size_t k = 0; k < list.size(); ++k) {
+                        if ((int)k == editingSweepIndex_) continue;
+                        if (sweepsOverlap(list[k], sw)) {
+                            wchar_t m[128];
+                            swprintf(m, 128, L"Overlap with sweep %zu. Adjust ranges.", k + 1);
+                            setStatus(m);
+                            return TRUE;
+                        }
+                    }
+                    list[editingSweepIndex_] = sw;
+                    populateSweepDialog(dlg, editingSweepParam_, patternLengths(),
+                                        list[editingSweepIndex_], list, editingSweepIndex_);
+                }
+                pushSweeps(engine_, editingSweepParam_);
+                refreshSweptLabels();
+                wchar_t m[256];
+                // The two-line status area holds about 170 characters.
+                const wchar_t* tail = engine_.isRunning()
+                    ? L"Cancel still undoes it all."
+                    : L"Nothing is playing, though: start playback before opening the editor.";
+                if (any && list.size() == 1)
+                    swprintf(m, 256, L"Applied: sweep 1 updated, and it is what you hear now. %s", tail);
+                else if (any)
+                    swprintf(m, 256, L"Applied: sweep %d updated, and all %zu are what you hear now. %s",
+                             editingSweepIndex_ + 1, list.size(), tail);
+                else
+                    swprintf(m, 256, L"Applied: no sweeps on this slider. Add one first to hear it. %s",
+                             tail);
+                setStatus(m);
+                return TRUE;
+            }
             if (id == IDC_SWEEP_ADD) {
                 Sweep sw = readSweepFromDialog(dlg, editingSweepParam_);
                 if (sweepIsBackwards(sw)) {
