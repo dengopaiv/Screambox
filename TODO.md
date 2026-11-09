@@ -267,9 +267,13 @@ before, it reused the frequency slider's taper, whose smallest step was 5 Hz. **
 only `osc_starts_late` moved (its Ring LFO, now 300 cents); new cases `osc_between_ring`
 (Dengo's example), `_cutoff` (over a straight sweep it ignores), `_pwm` (the per-sample
 path), and two RELATIONS - equal ends hold the value, on Cutoff and on Ring frequency.
-Driven in the app. **Still coarse:** the Ring frequency slider itself (and so a between
-value on it) has 100 positions from 5 Hz to 2 kHz, about 6 % apart - 95 Hz falls between
-94 and 100.
+Driven in the app. **The Ring frequency slider is finer** (Dengo, same day): 1000 positions
+instead of 100, about 0.6 % apart (under a tenth of a semitone), in the Acid FX dialog and
+the sweep editor alike - 95 Hz is position 491 (94.75 Hz, shown "95 Hz"). Songs store Hz,
+so nothing moved; every old position is exactly every tenth new one. The sweep clipboard
+now holds a share of the slider's travel instead of a raw position, since sliders no longer
+all have about 100 positions: a Cutoff sweep 10-80 pasted onto Ring frequency still covers
+positions 100-800 of 1000.
 **Not verified - needs ears:** that gliding Decay, Resonance and the effect sliders sound
 right within a note, and the CPU cost on a slow machine (every moving sweep re-derives
 the knobs and the effect coefficients each sample).

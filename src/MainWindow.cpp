@@ -594,6 +594,11 @@ void MainWindow::buildLayout() {
 // editor needs it too, for the frequency target.
 static double ringHzFromPos(int pos);
 static int    ringPosFromHz(double hz);
+// Positions on the Ring frequency slider. 1000, not 100 (Dengo, 2026-11-09):
+// at 100 they were about 6 % apart and 95 Hz fell between 94 and 100. At 1000
+// a step is about 0.6 %, under a tenth of a semitone. Every old position is
+// every tenth new one, so a frequency set on the old slider is found exactly.
+constexpr int kRingSteps = 1000;
 static void   formatRingHz(double hz, wchar_t* out, size_t n);
 
 // How the sweep editor shows and stores each kind of sweep target. A sweep
@@ -779,6 +784,28 @@ INT_PTR CALLBACK MainWindow::sweepEditorProc(HWND dlg, UINT msg, WPARAM wp, LPAR
 // they are set up for is remembered, because on Ring frequency it changes with
 // the LFO choices (valueKind) and the values have to be reset when it does.
 static SweepKind s_trackKind = SweepKind::Percent;
+// The trackbar range of each kind - what configureSweepValueTrackbars sets.
+static void kindRange(SweepKind kind, int& lo, int& hi) {
+    lo = 0; hi = 100;
+    switch (kind) {
+        case SweepKind::MainBi:  lo = -100;  break;
+        case SweepKind::Squelch: hi = 200;   break;
+        case SweepKind::Cents:   lo = -1200; hi = 1200; break;
+        case SweepKind::RingHz:  hi = kRingSteps; break;
+        default: break;
+    }
+}
+// The clipboard keeps a value as a share of its slider's travel, in 1/10000s:
+// sliders now differ in how many positions they have (Ring frequency 1000,
+// most 100), so a raw position no longer meant the same place on another.
+static int clipFromPos(SweepKind kind, int pos) {
+    int lo, hi; kindRange(kind, lo, hi);
+    return (int)std::lround((double)(pos - lo) * 10000.0 / (double)(hi - lo));
+}
+static int posFromClip(SweepKind kind, int clip) {
+    int lo, hi; kindRange(kind, lo, hi);
+    return lo + (int)std::lround((double)clip * (double)(hi - lo) / 10000.0);
+}
 static void configureSweepValueTrackbars(HWND dlg, SweepKind kind) {
     s_trackKind = kind;
     int lo = 0, hi = 100, line = 1, page = 10;
@@ -786,6 +813,7 @@ static void configureSweepValueTrackbars(HWND dlg, SweepKind kind) {
         case SweepKind::MainBi:  lo = -100; break;
         case SweepKind::Squelch: hi = 200;  break;
         case SweepKind::Cents:   lo = -1200; hi = 1200; line = 10; page = 100; break;
+        case SweepKind::RingHz:  hi = kRingSteps; page = kRingSteps / 10; break;
         default: break;
     }
     for (int id : {IDC_SWEEP_START_VALUE, IDC_SWEEP_END_VALUE}) {
@@ -1482,16 +1510,17 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                 return TRUE;
             }
             if (id == IDC_SWEEP_COPY) {
-                // The clipboard holds SLIDER POSITIONS, not stored values. A
-                // sweep is pasted between parameters, and since v14 those store
-                // different units - percent, cents, fractions of a Hz. In
-                // positions, a Cutoff sweep from 10 to 80 pasted onto Ring
-                // frequency still travels most of that slider; in stored units
-                // it would be 0.1 Hz to 0.8 Hz, clamped to the bottom.
+                // The clipboard holds a SHARE OF THE SLIDER'S TRAVEL, not
+                // stored values. A sweep is pasted between parameters, and
+                // those store different units - percent, cents, fractions of a
+                // Hz - and have different numbers of positions. As a share, a
+                // Cutoff sweep from 10 to 80 pasted onto Ring frequency still
+                // travels most of that slider; in stored units it would be
+                // 0.1 Hz to 0.8 Hz, clamped to the bottom.
                 sweepClipboard_ = readSweepFromDialog(dlg, editingSweepParam_);
                 const SweepKind ck = valueKind(editingSweepParam_, sweepClipboard_.osc);
-                sweepClipboard_.startValue = sweepStoredToPos(ck, sweepClipboard_.startValue);
-                sweepClipboard_.endValue   = sweepStoredToPos(ck, sweepClipboard_.endValue);
+                sweepClipboard_.startValue = clipFromPos(ck, sweepStoredToPos(ck, sweepClipboard_.startValue));
+                sweepClipboard_.endValue   = clipFromPos(ck, sweepStoredToPos(ck, sweepClipboard_.endValue));
                 sweepClipboardValid_ = true;
                 setStatus(L"Sweep copied to clipboard.");
                 return TRUE;
@@ -1500,8 +1529,8 @@ INT_PTR MainWindow::sweepEditorHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                 if (!sweepClipboardValid_) { setStatus(L"Clipboard empty."); return TRUE; }
                 Sweep pasted = sweepClipboard_;
                 const SweepKind pk = valueKind(editingSweepParam_, pasted.osc);
-                pasted.startValue = sweepPosToStored(pk, pasted.startValue);
-                pasted.endValue   = sweepPosToStored(pk, pasted.endValue);
+                pasted.startValue = sweepPosToStored(pk, posFromClip(pk, pasted.startValue));
+                pasted.endValue   = sweepPosToStored(pk, posFromClip(pk, pasted.endValue));
                 populateSweepDialog(dlg, editingSweepParam_, patternLengths(),
                                     pasted, list, editingSweepIndex_);
                 setStatus(L"Pasted — press Add to commit.");
@@ -1940,14 +1969,14 @@ static const double kRingMaxHz = 2000.0;
 
 static double ringHzFromPos(int pos) {
     if (pos < 0) pos = 0;
-    if (pos > 100) pos = 100;
-    return kRingMinHz * std::pow(kRingMaxHz / kRingMinHz, pos / 100.0);
+    if (pos > kRingSteps) pos = kRingSteps;
+    return kRingMinHz * std::pow(kRingMaxHz / kRingMinHz, pos / (double)kRingSteps);
 }
 
 static int ringPosFromHz(double hz) {
     if (hz <= kRingMinHz) return 0;
-    const double p = 100.0 * std::log(hz / kRingMinHz) / std::log(kRingMaxHz / kRingMinHz);
-    return std::clamp(static_cast<int>(std::lround(p)), 0, 100);
+    const double p = kRingSteps * std::log(hz / kRingMinHz) / std::log(kRingMaxHz / kRingMinHz);
+    return std::clamp(static_cast<int>(std::lround(p)), 0, kRingSteps);
 }
 
 static void formatRingHz(double hz, wchar_t* out, size_t n) {
@@ -1990,9 +2019,9 @@ INT_PTR MainWindow::distDialogHandler(HWND dlg, UINT msg, WPARAM wp, LPARAM lp) 
 
         {
             HWND t = GetDlgItem(dlg, IDC_FX_RING_HZ);
-            SendMessageW(t, TBM_SETRANGE, TRUE, MAKELPARAM(0, 100));
+            SendMessageW(t, TBM_SETRANGE, TRUE, MAKELPARAM(0, kRingSteps));
             SendMessageW(t, TBM_SETLINESIZE, 0, 1);
-            SendMessageW(t, TBM_SETPAGESIZE, 0, 10);
+            SendMessageW(t, TBM_SETPAGESIZE, 0, kRingSteps / 10);
             const double hz = engine_.getParam(CbParam::RingHz);
             SendMessageW(t, TBM_SETPOS, TRUE, ringPosFromHz(hz));
             wchar_t buf[24]; formatRingHz(hz, buf, 24);
